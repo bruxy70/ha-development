@@ -9,7 +9,7 @@
     {
       "name": "ha-development",
       "description": "HA automations, templates, AppDaemon, ESPHome LVGL, and development agents — non-obvious syntax, pitfalls, and best practices",
-      "source": "."
+      "source": "./"
     }
   ]
 }
