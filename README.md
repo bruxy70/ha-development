@@ -9,6 +9,7 @@ A Claude Code plugin for Home Assistant and ESPHome development. Provides skills
 - **ha-appdaemon** — AppDaemon Python apps. App lifecycle and threading model, callback signatures, `listen_state` nuances, scheduler API, service calls, async app patterns, time utilities.
 - **esphome-lvgl** — ESPHome-based HMI displays. Hardware configuration (ESP32-S3, display drivers, touchscreens), LVGL widgets, styles, layouts, C++ lambdas, HA integration, common patterns, and troubleshooting.
 - **svg-rendering** — SVG rendering for HMI display mockups. Coordinate systems, arc math, gauge templates, gradients, clipping, common pitfalls, and rendering checklist.
+- **ha-mcp-setup** — Step-by-step guide for connecting Claude Code to your Home Assistant instance via the built-in MCP server. Covers enabling the integration, creating long-lived access tokens, configuring Claude Code, and troubleshooting.
 
 ## Agents
 
@@ -27,6 +28,30 @@ A Claude Code plugin for Home Assistant and ESPHome development. Provides skills
 - **test-runner-validator** — Runs tests and validates code changes. Systematic failure analysis and fix methodology.
 - **security-auditor** — Security review for IoT/HA projects. Network security, secrets management, webhook hardening, authentication.
 - **design-review** — UX/UI review for LVGL displays and HA dashboards. Visual design, accessibility, information hierarchy.
+
+## Connecting to Home Assistant (MCP)
+
+This plugin also includes setup instructions for connecting Claude Code to your HA instance via the built-in MCP server. Once connected, Claude can query entities, call services, and interact with HA directly.
+
+Quick setup:
+1. In HA: **Settings → Devices & Services → Add Integration → Model Context Protocol**
+2. In HA: **Profile → Long-Lived Access Tokens → Create Token**
+3. Add to `~/.claude.json`:
+```json
+{
+  "mcpServers": {
+    "home-assistant": {
+      "type": "http",
+      "url": "http://<YOUR_HA_IP>:8123/api/mcp",
+      "headers": {
+        "Authorization": "Bearer <YOUR_TOKEN>"
+      }
+    }
+  }
+}
+```
+
+See the **ha-mcp-setup** skill for full details and troubleshooting.
 
 ## Installation
 
