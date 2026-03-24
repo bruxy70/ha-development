@@ -1,0 +1,19 @@
+{
+  "metadata": {
+    "name": "ha-development",
+    "owner": { "name": "bruxy70" },
+    "description": "Home Assistant development skills for Claude Code",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "ha-development",
+      "description": "HA automations, templates, and AppDaemon skills — non-obvious syntax, pitfalls, and best practices",
+      "version": "1.0.0",
+      "source": {
+        "source": "relative",
+        "path": "."
+      }
+    }
+  ]
+}

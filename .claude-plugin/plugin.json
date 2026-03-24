@@ -1,0 +1,7 @@
+{
+  "name": "ha-development",
+  "description": "Home Assistant development skills for automations, scripts, blueprints, Jinja2 templates, and AppDaemon. Covers non-obvious syntax, pitfalls, and best practices from current HA documentation.",
+  "author": {
+    "name": "bruxy70"
+  }
+}
