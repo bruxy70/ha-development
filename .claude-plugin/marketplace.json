@@ -2,13 +2,13 @@
   "metadata": {
     "name": "ha-development",
     "owner": { "name": "bruxy70" },
-    "description": "Home Assistant development skills for Claude Code",
+    "description": "Home Assistant and ESPHome development skills and agents for Claude Code",
     "version": "1.0.0"
   },
   "plugins": [
     {
       "name": "ha-development",
-      "description": "HA automations, templates, and AppDaemon skills — non-obvious syntax, pitfalls, and best practices",
+      "description": "HA automations, templates, AppDaemon, ESPHome LVGL, and development agents — non-obvious syntax, pitfalls, and best practices",
       "version": "1.0.0",
       "source": {
         "source": "relative",

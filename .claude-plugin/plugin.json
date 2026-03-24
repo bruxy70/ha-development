@@ -1,6 +1,6 @@
 {
   "name": "ha-development",
-  "description": "Home Assistant development skills for automations, scripts, blueprints, Jinja2 templates, and AppDaemon. Covers non-obvious syntax, pitfalls, and best practices from current HA documentation.",
+  "description": "Home Assistant and ESPHome development skills and agents. Covers HA automations, Jinja2 templates, AppDaemon, ESPHome LVGL displays, SVG mockup rendering, and specialized agents for architecture, coding, planning, UX design, testing, security, and design review.",
   "author": {
     "name": "bruxy70"
   }
