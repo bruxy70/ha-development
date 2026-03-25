@@ -3,6 +3,7 @@ name: ha-troubleshooting
 description: Home Assistant troubleshooting and diagnostics. Use when the user reports a problem with Home Assistant — entities not working, automations not triggering, states lost on restart, integrations failing, UI not updating, or any HA misbehavior. Also use when discussing HA logs, restore_state, recorder, database health, or diagnostic workflows. This skill guides structured diagnosis using the HA MCP server to check live state and call services.
 allowed_tools:
   - mcp__home-assistant
+  - Bash
 ---
 
 # Home Assistant Troubleshooting
@@ -35,6 +36,27 @@ You are a Home Assistant troubleshooting specialist. When a user reports a probl
 
 Don't spend time guessing — the log usually contains the answer. Use the HA MCP server to query state and services, or check logs directly.
 
+**Fetching HA core logs remotely:**
+
+Since HA OS 2025.11, the `home-assistant.log` file is no longer written to `/config/`. The `/api/error_log` endpoint is also dead (returns 404). Use the Supervisor proxy API instead:
+
+```bash
+# Fetch last 100 lines of HA core log (requires long-lived access token)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://<HA_IP>:8123/api/hassio/core/logs?lines=100" \
+  | sed 's/\x1b\[[0-9;]*m//g'
+```
+
+The token can be found in the MCP server configuration (e.g., `.claude.json` under `mcpServers.home-assistant.headers.Authorization`).
+
+Other useful log endpoints via the same API:
+- `/api/hassio/supervisor/logs` — Supervisor logs
+- `/api/hassio/addons/{addon_slug}/logs` — Addon-specific logs (e.g., `a0d7b954_appdaemon`)
+
+Note: `WebFetch` cannot reach local network IPs — use `curl` via the Bash tool.
+
+**AppDaemon logs** are typically mounted on the host filesystem and can be read directly (e.g., `/Volumes/config/appdaemon/logs/` or similar path depending on mount setup).
+
 **What to look for in logs:**
 - Errors from `homeassistant.helpers.storage` — storage write failures affect ALL state persistence
 - Errors from `homeassistant.components.recorder` — database issues
@@ -43,15 +65,20 @@ Don't spend time guessing — the log usually contains the answer. Use the HA MC
 - Repeated errors on a cycle (every 30s, every minute) — indicates a persistent problem, not transient
 
 **Filter for the relevant subsystem:**
-```
+```bash
+# Pipe the curl output through grep to filter:
+
 # Storage/persistence issues
-grep: "storage|restore_state|recorder|Bad data"
+grep -E "storage|restore_state|recorder|Bad data"
 
 # Automation issues
-grep: "automation|trigger|condition"
+grep -E "automation|trigger|condition"
 
 # Integration issues
-grep: "custom_components|setup.*failed|platform.*not ready"
+grep -E "custom_components|setup.*failed|platform.*not ready"
+
+# Errors and warnings only
+grep -E "ERROR|WARNING"
 ```
 
 ### Step 3: Check live state and configuration
@@ -62,7 +89,10 @@ Use the HA MCP server to verify that the running system matches expectations:
 - Verify automation/script states (enabled/disabled)
 - Call services to test if they work
 
-**File-level checks (when shell access is available):**
+**File-level checks (when shell/mount access is available):**
+
+Note: On HA OS 2025.11+, `/config/home-assistant.log` no longer exists. Use the Supervisor API from Step 2 instead.
+
 ```bash
 # Is restore_state being actively updated?
 ls -la /config/.storage/core.restore_state
