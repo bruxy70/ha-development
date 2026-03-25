@@ -10,6 +10,7 @@ A Claude Code plugin for Home Assistant and ESPHome development. Provides skills
 - **esphome-lvgl** — ESPHome-based HMI displays. Hardware configuration (ESP32-S3, display drivers, touchscreens), LVGL widgets, styles, layouts, C++ lambdas, HA integration, common patterns, and troubleshooting.
 - **svg-rendering** — SVG rendering for HMI display mockups. Coordinate systems, arc math, gauge templates, gradients, clipping, common pitfalls, and rendering checklist.
 - **ha-mcp-setup** — Step-by-step guide for connecting Claude Code to your Home Assistant instance via the built-in MCP server. Covers enabling the integration, creating long-lived access tokens, configuring Claude Code, and troubleshooting.
+- **ha-troubleshooting** — Structured diagnostic methodology for HA problems. Uses the HA MCP server to check live state, query logs, and call services. Covers common failure patterns (state lost on restart, automations not triggering, entities unavailable, service calls doing nothing), restore_state internals, recorder quirks, and template engine pitfalls.
 
 ## Agents
 
