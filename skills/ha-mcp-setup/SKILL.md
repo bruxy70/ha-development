@@ -16,8 +16,8 @@ This skill covers connecting Claude Code to a Home Assistant instance via the bu
 ## Step 1: Enable the MCP Integration in Home Assistant
 
 1. Go to **Settings → Devices & Services → Add Integration**
-2. Search for **"Model Context Protocol"** (or **"MCP"**)
-3. Click to add it
+2. Search for **"Model Context Protocol Server"**
+3. Click to add it — make sure it says **"Server"** (the other integration called just "Model Context Protocol" is an MCP *client* for HA's own conversation agents, not what you need here)
 4. The integration creates the `/api/mcp` endpoint on your HA instance
 
 If the integration doesn't appear, verify your HA version is 2025.5.0+.

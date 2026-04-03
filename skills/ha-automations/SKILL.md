@@ -54,7 +54,93 @@ to: "error"
 
 **`not_from`/`not_to`** exist but CANNOT be combined with `from`/`to` respectively.
 
-## 3. Numeric State Trigger — Crossing Semantics
+## 3. Purpose-Specific Triggers & Conditions (Labs Feature)
+
+**Requires:** Home Assistant Labs enabled (**Settings → System → Labs**). The old `state`/`numeric_state` syntax always works — this is an alternative, not a replacement.
+
+**What it is:** Domain-provided triggers and conditions that replace generic state-based ones with human-readable names. Uses `domain.trigger_key` / `domain.condition_key` format and supports `target:` (entity, area, device, floor, label).
+
+**When reviewing automations:** If you see `trigger: light.turned_on` or `condition: person.is_home`, this is valid purpose-specific syntax — do NOT flag it as an error.
+
+**Basic example — old vs new:**
+```yaml
+# OLD (still valid):
+triggers:
+  - trigger: state
+    entity_id: light.living_room
+    to: "on"
+conditions:
+  - condition: state
+    entity_id: light.living_room
+    state: "on"
+
+# NEW (purpose-specific):
+triggers:
+  - trigger: light.turned_on
+    target:
+      entity_id: light.living_room
+conditions:
+  - condition: light.is_on
+    target:
+      entity_id: light.living_room
+```
+
+**Key advantage — area/label/floor targeting** (no need to list entities):
+```yaml
+triggers:
+  - trigger: light.turned_on
+    target:
+      area_id: living_room      # any light in the area
+      # also: device_id, floor_id, label_id
+```
+
+**`behavior` field — controls multi-entity matching:**
+```yaml
+# Triggers: "any" (default), "first" (only first to enter state), "last" (only last)
+triggers:
+  - trigger: light.turned_on
+    target:
+      area_id: living_room
+    behavior: first   # fires only when the FIRST light turns on
+
+# Conditions: "any" (default), "all"
+conditions:
+  - condition: light.is_on
+    target:
+      area_id: living_room
+    behavior: all     # true only if ALL lights are on
+```
+
+**Threshold triggers** (numeric values):
+```yaml
+triggers:
+  - trigger: climate.target_temperature_crossed_threshold
+    target:
+      entity_id: climate.bedroom
+    threshold:
+      type: above     # any, above, below, between, outside
+      value:
+        number: 25
+```
+
+**Common trigger/condition keys by domain:**
+
+| Domain | Triggers | Conditions |
+|---|---|---|
+| `light` | `turned_on`, `turned_off`, `brightness_changed`, `brightness_crossed_threshold` | `is_on`, `is_off`, `is_brightness` |
+| `climate` | `turned_on`, `turned_off`, `started_heating`, `started_cooling`, `hvac_mode_changed`, `target_temperature_crossed_threshold` | _(same pattern)_ |
+| `switch`/`fan` | `turned_on`, `turned_off` | `is_on`, `is_off` |
+| `cover` | `blind_opened`, `blind_closed`, `curtain_opened`, `curtain_closed`, `shutter_opened`, `shutter_closed` | `blind_is_open`, `blind_is_closed`, etc. |
+| `person`/`device_tracker` | `entered_home`, `left_home` | `is_home`, `is_not_home` |
+| `lock` | — | `is_locked`, `is_unlocked`, `is_jammed` |
+| `alarm_control_panel` | `armed`, `armed_away`, `armed_home`, `disarmed`, `triggered` | `is_armed` |
+| `battery` | `low`, `started_charging`, `level_crossed_threshold` | — |
+| `update` | `update_became_available` | — |
+| `door`/`window` | `opened`, `closed` | `is_open`, `is_closed` |
+
+This is not exhaustive — more domains are being added. The full list is in the HA source under each domain's `trigger.py` and `condition.py`.
+
+## 4. Numeric State Trigger — Crossing Semantics
 
 Fires ONLY when value CROSSES the threshold. If value is already below threshold and changes to another below-threshold value, it does NOT fire. Must go above first, then come back below.
 
@@ -62,14 +148,14 @@ When `above` AND `below` both specified: defines a range. Fires once on entry, o
 
 Thresholds can reference entities: `above: sensor.inside_temperature`.
 
-## 4. Template Trigger
+## 5. Template Trigger
 
 Fires when template goes from falsy → truthy (not on every re-evaluation).
 - Truthy = non-zero number or strings `true`, `yes`, `on`, `enable`
 - Templates with no entity references render once per minute
 - `for:` also does NOT survive restart
 
-## 5. Time Trigger Features
+## 6. Time Trigger Features
 
 **Weekday filtering:**
 ```yaml
@@ -92,7 +178,7 @@ triggers:
 
 **Time pattern:** `/5` in minutes = every 5 minutes. Do NOT zero-prefix: `'1'` not `'01'`.
 
-## 6. Automation Modes
+## 7. Automation Modes
 
 | Mode | Behavior | `max` default |
 |------|----------|---------------|
@@ -103,7 +189,7 @@ triggers:
 
 `max_exceeded: silent` suppresses the warning log.
 
-## 7. Variables & Scope
+## 8. Variables & Scope
 
 **Three scopes:**
 1. **`trigger_variables:`** — evaluated ONCE at automation load time. LIMITED templates only (no `states()`, `now()`, etc.). Primarily for `!input` references in triggers.
@@ -122,7 +208,7 @@ variables:
   my_input: !input my_input
 ```
 
-## 8. Action Details
+## 9. Action Details
 
 **`target:` accepts templates:**
 ```yaml
@@ -142,7 +228,7 @@ target: "{{ {'entity_id': ['light.office', 'light.office_2']} }}"
       below: 20
 ```
 
-## 9. Scripts — Key Differences from Automations
+## 10. Scripts — Key Differences from Automations
 
 **Fields (parameters):** UI hints only — HA does NOT enforce `required` at runtime. Guard with templates yourself.
 ```yaml
@@ -211,7 +297,7 @@ If one parallel branch fails, others still complete. Avoid modifying same variab
 
 **`set_conversation_response:`** — returns text to voice/conversation agents. Last value wins if called multiple times.
 
-## 10. Blueprints
+## 11. Blueprints
 
 **Input sections (2024.6+):** Group inputs visually. All inputs in collapsed sections MUST have a `default`.
 ```yaml
@@ -288,7 +374,7 @@ triggers:
 
 **Disabling individual triggers:** `enabled: false` or `enabled: !input toggle_input`. Evaluated ONCE at load time, not dynamically.
 
-## 11. Timer-Based Automation Pattern (Restart-Safe)
+## 12. Timer-Based Automation Pattern (Restart-Safe)
 
 Use timer entities + state triggers instead of `delay:` or `wait_template:` in action sequences. This pattern survives HA restarts because the timer state persists.
 
@@ -344,13 +430,13 @@ actions:
 
 **When NOT to use:** Simple one-shot delays where restart safety isn't needed.
 
-## 12. Polling vs Event-Driven — Architecture Decision
+## 13. Polling vs Event-Driven — Architecture Decision
 
 Two paradigms for HA automations. Choose based on failure mode:
 
 **Polling (periodic check)** — use `time_pattern` trigger + condition check:
 - **When:** Missing the event would leave the system in a bad/dangerous state (water running, heater stuck on, device not turning off)
-- **Why:** Numeric state triggers only fire on threshold CROSSING (section 3). If you miss the single crossing moment (HA restart, network glitch, sensor hiccup), the automation never fires. Periodic checks catch the condition even if the crossing was missed.
+- **Why:** Numeric state triggers only fire on threshold CROSSING (section 4). If you miss the single crossing moment (HA restart, network glitch, sensor hiccup), the automation never fires. Periodic checks catch the condition even if the crossing was missed.
 - **Pattern:** Run every 1/5/15 min or at a fixed time, check whether current state warrants action
 - **Examples:**
   - Temperature safety: check every 5 min if temp is above limit → turn off heater (don't rely on crossing the threshold)
@@ -377,7 +463,7 @@ actions:
 - **Why:** Low latency, no unnecessary polling overhead
 - **Examples:**
   - Motion → light on (next motion re-triggers anyway)
-  - Device on → start timer → auto-off (timer pattern from section 11)
+  - Device on → start timer → auto-off (timer pattern from section 12)
   - Button press → action
   - Door open → notification
 
@@ -402,7 +488,7 @@ actions:
 ```
 The condition ensures the periodic trigger only acts when needed, while the event trigger provides immediate response when available.
 
-## 13. Webhook Trigger Notes
+## 14. Webhook Trigger Notes
 
 - A webhook ID can only be used in ONE automation at a time
 - `local_only: true` by default — must set `false` for internet access
