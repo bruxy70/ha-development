@@ -61,7 +61,7 @@ Note: `WebFetch` cannot reach local network IPs — always use `curl` via the Ba
 
 ### Method 3: SSH + HA CLI via paramiko (deep access)
 
-For OS-level diagnostics, connect to HA via SSH and use the `ha` CLI. This requires the **Advanced SSH & Web Terminal** add-on installed in Home Assistant.
+For OS-level diagnostics, connect to HA via SSH and use the `ha` CLI. **SSH is not available by default** — it requires the **Advanced SSH & Web Terminal** add-on (application) to be installed in Home Assistant. This is a fallback method; prefer MCP or the REST API when HA Core is responsive.
 
 **Why paramiko:** Native `ssh` requires key files and varies across platforms (Mac uses OpenSSH, Windows needs PuTTY or similar). Python's `paramiko` library works identically on all platforms, supports password authentication natively, and handles host-key prompts automatically — ideal for Claude Code.
 
@@ -143,7 +143,7 @@ Note: `WebFetch` cannot reach local network IPs — use `curl` via the Bash tool
 
 **Fallback — SSH + `ha core logs`** (works even when HA Core is down):
 
-If the API is unresponsive (HA Core crashed/hung), use SSH via paramiko to run `ha core logs` directly on the Supervisor. See **Method 3** in the Access Methods section for connection details.
+If the API is unresponsive (HA Core crashed/hung), use SSH via paramiko to run `ha core logs` directly on the Supervisor. This requires the **Advanced SSH & Web Terminal** add-on to be installed — SSH is not available in HA by default. See **Method 3** in the Access Methods section for connection details.
 
 **AppDaemon logs** are typically mounted on the host filesystem and can be read directly (e.g., `/Volumes/config/appdaemon/logs/` or similar path depending on mount setup).
 
