@@ -799,7 +799,7 @@ On confirm, push to HA via `homeassistant.action` -- the round-trip through HA p
 
 ### HA Actions from ESPHome
 
-**Prerequisite:** Enable "Allow device to perform Home Assistant actions" in the ESPHome integration settings (per device) in HA.
+**Prerequisite:** Enable "Allow device to perform Home Assistant actions" in the ESPHome integration settings (per device) in HA. Without this, action calls fail silently -- no error in ESPHome logs. See Troubleshooting → "HA Actions Silently Failing".
 
 ```yaml
 # Newer syntax (preferred):
@@ -2048,6 +2048,12 @@ When implementing a page or feature, verify:
 - `image_recolor_opa: 100%` MUST be set (defaults to 0%)
 - Image must be `binary` type for recoloring to work
 
+### HA Actions Silently Failing
+- `homeassistant.action:` calls may fail silently -- no error in ESPHome logs, no effect in HA
+- **Cause:** Each ESPHome device must be explicitly authorized to perform HA actions
+- **Fix:** In Home Assistant: Settings → Devices & Services → ESPHome → select the device → Configure → enable "Allow the device to perform Home Assistant actions"
+- This must be set for **each new ESPHome device** -- it is not enabled by default
+
 ### Touch Not Responding
 - Verify touchscreen component is configured and listed in `lvgl: touchscreens:`
 - Check I2C bus configuration (SDA/SCL pins)
@@ -2078,6 +2084,7 @@ When implementing a page or feature, verify:
       id: my_icon
   ```
 - **Multiple `on_boot:` entries**: Allowed with different priorities in the same config
+- **Display rotation is NOT an LVGL setting**: `rotation:` belongs on the `display:` platform component, NOT under `lvgl:`. LVGL renders to whatever the display driver provides -- to rotate the output, set `rotation: 90/180/270` on the display component and adjust touchscreen `swap_xy`/`mirror_x`/`mirror_y` to match.
 
 ---
 
