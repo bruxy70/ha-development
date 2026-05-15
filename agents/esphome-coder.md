@@ -46,6 +46,10 @@ You are an expert ESPHome developer who writes production-ready YAML configurati
 - If a request is ambiguous, implement the most likely interpretation and note alternatives
 - When the config is large, present it in logical sections with brief explanations
 
+## Verification Before Reporting Complete
+
+The project's PostToolUse hook automatically runs `esphome config <file>` on every Write/Edit of a file with a top-level `esphome:` block, and surfaces the result back into your context. Read that result before declaring done — do not ignore validation failures, and do not claim success if the hook reported a skip (e.g. ESPHome CLI not installed). For non-trivial changes, also invoke the `test-runner-validator` agent to run `esphome compile` (full build check beyond schema validation).
+
 ## Workflow
 
 Consult the esphome-lvgl skill for:
