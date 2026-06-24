@@ -178,6 +178,70 @@ psram:
   speed: 80MHz
 ```
 
+### ESP32-P4 with MIPI-DSI
+
+Newer boards (e.g. CrowPanel/Waveshare 7" P4) use the ESP32-P4 with a built-in MIPI-DSI
+interface and a separate ESP32-C6 co-processor for Wi-Fi. Config differs substantially from S3
+— these keys are the non-obvious, load-bearing ones (pin numbers are board-specific):
+
+```yaml
+esp32:
+  variant: esp32p4              # NOT `board:` — P4 uses `variant:`
+  engineering_sample: true      # required for pre-rev3 P4 silicon
+  cpu_frequency: 360MHZ
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+    advanced:
+      execute_from_psram: true              # REQUIRED (keep true; false overflows flash)
+      enable_idf_experimental_features: true
+  # Do NOT use the old `sdkconfig_options:` block — replaced by `advanced:`
+
+psram:
+  speed: 200MHz                 # no `mode:` key on P4
+
+esp_ldo:                        # P4 needs TWO LDO channels (3 AND 4), both 2.5V
+  - channel: 3
+    voltage: 2.5V
+  - channel: 4
+    voltage: 2.5V
+
+esp32_hosted:                   # Wi-Fi runs on a C6 co-processor over SDIO
+  variant: esp32c6
+  # ...reset/cmd/clk/d0–d3 pins per board...
+  # sdio_frequency: 10MHz       # stability fix: default 40MHz causes
+                                # `sdmmc_io_rw_extended ... 0x109` timeouts/reboots (ESPHome #14313)
+
+display:
+  - platform: mipi_dsi          # built into ESPHome — no external_components needed
+    model: WAVESHARE-ESP32-P4-WIFI6-TOUCH-LCD-7B   # or CUSTOM with explicit timings
+    reset_pin: { number: 41 }
+    update_interval: never
+    auto_clear_enabled: false
+    dimensions: { width: 1024, height: 600 }
+    color_order: RGB
+    color_depth: 16
+```
+
+**RGB565 images need explicit byte order on P4 MIPI-DSI** — set `byte_order: little_endian` on
+the `lvgl:` block *and* on every `rgb565`/`RGB565` image, or images render with corrupted
+colours. (Not needed on S3 RPI-DPI-RGB.)
+
+```yaml
+image:
+  - file: foo.png
+    type: RGB565
+    byte_order: little_endian
+lvgl:
+  byte_order: little_endian
+```
+
+**Backlight + power pins:** backlight is LEDC PWM (e.g. GPIO31); a separate inverted GPIO
+"power_light" (e.g. GPIO29) must be turned **off** shortly after boot (`on_boot`). **Flashing:**
+native USB — hold BOOT, tap RESET, release; command-line `esphome run` is more reliable than
+WebSerial. **Portrait:** put `rotation:` on `display:` (not under `lvgl:`) and add
+`swap_xy`/`mirror_y` to the touchscreen — see "Touch Calibration" below.
+
 ### Display Drivers
 
 | Driver | Type | Common Displays |
@@ -845,7 +909,10 @@ LVGL (Light and Versatile Graphics Library) is an ESPHome component that provide
 
 ## LVGL Core Rules
 
-1. **ESPHome LVGL uses LVGL v8** -- not v9. All widget properties and APIs must match v8.
+1. **LVGL version depends on the ESPHome release.** ESPHome **≤ 2026.3** uses LVGL **v8**;
+   ESPHome **2026.4+** moved the `meter` widget onto LVGL **v9.4**'s `lv_scale`. Most YAML is
+   unchanged across the bump, but a few properties are deprecated and one C API was removed —
+   see "ESPHome 2026.4 / LVGL v9.4 migration" below. Match APIs to your target ESPHome version.
 2. **Color depth is RGB565 only** (16-bit, 2 bytes per pixel).
 3. **Display must be configured with:**
    - `auto_clear_enabled: false`
@@ -857,6 +924,35 @@ LVGL (Light and Versatile Graphics Library) is an ESPHome component that provide
    - With PSRAM prioritizing speed: `buffer_size: 12%` (internal RAM)
    - Default: 100% (fallback to 12% if allocation fails)
    - **WARNING:** On large RGB displays (e.g. 800x480 via rpi_dpi_rgb), `buffer_size: 100%` = 768KB, which causes OOM, kills WiFi/API, and makes the display blink. Omit `buffer_size` (default ~10%) or set an explicit small value.
+
+---
+
+## ESPHome 2026.4 / LVGL v9.4 migration
+
+ESPHome 2026.4 re-backed the `meter` widget on LVGL 9.4's `lv_scale`. When upgrading older
+configs, **compile first** — deprecations only warn; one C API removal hard-fails.
+
+**YAML deprecations (auto-remapped, warnings only):**
+
+| Old | New |
+|-----|-----|
+| `r_mod: N` (meter line indicator) | `length: -abs(N)` |
+| `disp_bg_color: 0xRRGGBB` (under `lvgl:`) | `bottom_layer: { bg_color: 0xRRGGBB, bg_opa: COVER }` |
+| `display: { platform: ili9xxx, ... }` | `display: { platform: mipi_spi, ... }` (sub-options carry over; `model: GC9A01A` still valid) |
+
+**Hard breakage (compile error):** the C API `lv_meter_set_indicator_value(meter, indicator, value)`
+was **removed**. Line indicators are now an `IndicatorLine` C++ class with `set_value(int)`:
+
+```cpp
+// OLD (fails to compile on 2026.4+):
+lv_meter_set_indicator_value(id(my_meter), id(my_needle), value);
+// NEW:
+id(my_needle).set_value(value);
+```
+
+`id(needle_id)` resolves to the `IndicatorLine` instance. Apply renames one at a time and
+re-compile between each. (The `r_mod` examples elsewhere in this skill still compile on 2026.4
+but emit deprecation warnings — prefer `length:` on new work.)
 
 ---
 
