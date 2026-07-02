@@ -7,6 +7,8 @@ description: Home Assistant Jinja2 templating reference. Use when writing or mod
 
 This skill contains ONLY HA-specific Jinja2 differences, sandbox restrictions, and pitfalls. Standard Jinja2 knowledge applies for everything else.
 
+**Function/filter/test names:** the complete documented set is bundled in [`reference/template-functions.md`](reference/template-functions.md) (200 entries) — treat it as the allowlist. Before using a function/filter/test that isn't standard Jinja2, confirm it's in that file, or that its page `https://rc.home-assistant.io/template-functions/<name>/` returns 200. Do not invent names. The docs were restructured in 2026.4: the reference now lives at [/template-functions/](https://rc.home-assistant.io/template-functions/) and the guides at [/docs/templating/](https://rc.home-assistant.io/docs/templating/).
+
 ## 1. Sandbox Security Restrictions
 
 **BLOCKED operations (raise `SecurityError: unsafe operation`):**
@@ -233,11 +235,14 @@ Returns `off` for: `False`, `"no"`, `"off"`, `"disable"`, `0`.
 |---|---|
 | `intersect(list2)` | Common elements |
 | `difference(list2)` | In first, not second |
+| `symmetric_difference(list2)` | In either, but NOT both |
 | `union(list2)` | All unique elements |
-| `combine(dict2)` | Merge dicts |
+| `combine(dict2, recursive=False)` | Merge dicts |
 | `flatten(levels)` | Flatten nested lists |
+| `merge_response(response)` | Flatten action `response_variable` dicts into one list (e.g. `calendar.get_events` across entities) |
+| `shuffle` / `typeof` | Randomize list order / return a value's type name as string (2023.x+) |
 
-## 19. Area/Device/Label Helper Functions
+## 19. Area/Device/Label/Entity Helper Functions
 
 ```jinja
 {{ area_entities('living_room') }}
@@ -251,3 +256,32 @@ Returns `off` for: `False`, `"no"`, `"off"`, `"disable"`, `0`.
 {{ labels('sensor.temp') }}  {# Labels on entity #}
 ```
 All also work as filters: `'living_room' | area_entities`.
+
+**Name/description lookups** (return the human-readable name, or `None` if not found):
+```jinja
+{{ entity_name('sensor.living_room_temperature') }}  {# "Living Room Temperature" #}
+{{ device_name('a1b2c3…') }}      {# accepts a device_id OR an entity_id #}
+{{ area_name('living_room') }}    {# also floor_name(), label_name(), label_description() #}
+```
+
+**Localized state text** — the state/attribute as shown in the UI language, not the raw value:
+```jinja
+{{ state_translated('climate.living_room') }}                    {# "Heizen" in German, not "heating" #}
+{{ state_attr_translated('climate.living_room', 'hvac_action') }}
+```
+Use these for notifications/dashboards; keep raw `states()`/`state_attr()` for logic/comparisons.
+
+## 20. Math Helpers & the Radians Gotcha
+
+- **Trig functions take RADIANS, not degrees:** `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`. Convert first: `{{ sin(45 | radians) }}`.
+- `clamp(value, min, max)` (2025.4) — constrain to a range. `remap(value, low1, high1, low2, high2, steps=…, edges=…)` (2025.5) — rescale between ranges (e.g. 0–100 → 0–255); `edges` controls out-of-range handling.
+- Stats: `average(list)`, `median`, `statistical_mode`. Hashes: `md5`, `sha1`, `sha256`, `sha512`. Bitwise: `bitwise_and/or/xor`. Encoding: `from_hex`, `pack`/`unpack`, `base64_encode`/`_decode`.
+- Most of these are `limited: true` — they work in [limited templates](#9-limited-templates) (unlike `states()` etc.).
+
+## 21. `apply` — Pass a Function Where a Filter Is Expected
+
+Complements `as_function` (§11). `apply(value, fn, *args)` calls `fn` with `value`, so you can use a function inside `map`/`select`/`reject`:
+```jinja
+{{ [1, 2, 3] | map('apply', my_fn) | list }}
+{{ apply(5, float) }}   {# 5.0 #}
+```
