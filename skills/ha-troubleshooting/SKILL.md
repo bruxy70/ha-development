@@ -34,11 +34,63 @@ You are a Home Assistant troubleshooting specialist. When a user reports a probl
 
 8. **Trace the data through the full pipeline.** Follow the value, not the code: where does it come from, where is it stored, what reads it back, at which step does it fail? Don't just check start and end — data flows through multiple layers (template → state machine → recorder → database → restore_state → startup) and the break can be at any one of them.
 
-## Access Methods
+## Step 0: Detect your execution context (do this FIRST)
 
-Three methods to access HA for diagnostics, in order of preference. The long-lived access token used by methods 1 and 2 can be found in the MCP server configuration (e.g., `.claude.json` under `mcpServers.home-assistant.headers.Authorization`).
+Before fetching any log, state, or file, determine **where this session runs** and **what access it has**. The best tool for each task depends entirely on this — it is the difference between reading AppDaemon logs in one second off a mounted volume and needlessly asking the user to paste them, or blindly running `ha …` as if on the HA shell while actually on a dev machine. Probe **once**, at the start; the answer holds for the whole session. State your conclusion out loud, then route every later access through the hierarchy below.
 
-### Method 1: MCP Server (recommended)
+Run these cheap checks (skip any you already know from context):
+
+| Question | Probe |
+|---|---|
+| On the HA host / an SSH terminal into it? | `command -v ha` succeeds **and** `/config` is a real local dir (not a network mount) |
+| Inside a container (Core / add-on)? | `/.dockerenv` exists, or `/proc/1/cgroup` mentions `docker` |
+| HA volume mounted on a dev machine? | a config dir exists off-host — e.g. `ls /Volumes/config` (mac), `\\HA\config` (Windows), or a bind-mount path. AppDaemon logs then live at `<mount>/appdaemon/logs/*.log` |
+| API reachable via MCP? | the `mcp__home-assistant` tool is present in this session |
+| API reachable via REST? | `curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOKEN" http://<HA_IP>:8123/api/` returns `200` |
+| SSH available? | Advanced SSH & Web Terminal add-on installed, then a `paramiko` connect succeeds (Method 3). **Usually absent — never assume it; probe or ask.** |
+
+The long-lived token for MCP/REST is in the MCP config (`.claude.json` → `mcpServers.home-assistant.headers.Authorization`).
+
+If a probe is ambiguous, **ask the user** ("Is SSH into HA available?" / "Is /config mounted here?") rather than guessing — a wrong guess is exactly the random behaviour this step exists to prevent.
+
+## Access hierarchy — route by WHAT you are fetching
+
+Once context is known, pick the **highest available tier** for each task. The ordering differs per artifact — a single global "prefer MCP" or "prefer the mount" rule is wrong (e.g. AppDaemon logs favour the mount; the Core log is not on the mount at all).
+
+### AppDaemon logs — and any file under `/config` (packages, `secrets.yaml`, `www/`, `.storage`)
+1. **Mounted volume / on-host** → read the file directly: `<mount>/appdaemon/logs/appdaemon.log` (+ rotated `.log.1`, `.log.2` for history). Fastest, complete. **Whenever a volume is mounted, do this — do NOT hit the API or ask the user.**
+2. **SSH** → `tail`/`cat` the file on the host.
+3. **REST API** → `/api/hassio/addons/a0d7b954_appdaemon/logs` (current session only, no rotation).
+4. **Ask** the user to paste the relevant lines.
+
+### HA Core log
+On HA OS 2025.11+ this is **no longer written to `/config`** — a mounted volume does **not** contain it. Do not look for `/config/home-assistant.log`.
+1. **REST API** → `curl .../api/hassio/core/logs?lines=100` (needs Core running).
+2. **SSH** → `ha core logs` (works even when Core is down/hung).
+3. **Ask** the user to paste.
+
+### Live entity state / attributes / history / service calls
+1. **MCP** (`mcp__home-assistant`) → states, services, history.
+2. **REST API** → `/api/states`, `/api/states/<id>`, `/api/template`, `/api/history/period/…`.
+3. **On-host / SSH** → `ha` CLI + Developer Tools.
+4. **Ask** for a Developer Tools → States value/screenshot.
+
+### `.storage` files & recorder DB (`core.restore_state`, `home-assistant_v2.db`)
+The API cannot read these — they need real file access.
+1. **Mounted volume / on-host / SSH** → read `<config>/.storage/…` and open the SQLite DB directly (see Step 3).
+2. **Ask** — no file access means requesting the specific file or a targeted query result.
+
+### `ha` CLI / OS-level ops (config check, restart, host stats)
+1. **On-host** → run `ha …` directly.
+2. **SSH** → run `ha …` remotely (Method 3).
+3. **REST API** → limited equivalents only, e.g. `/api/config/core/check_config`.
+4. Otherwise unavailable — say so rather than pretending to run it.
+
+## Access methods (reference detail)
+
+The three underlying access methods referenced by the hierarchy above. The long-lived access token used by methods 1 and 2 is in the MCP server configuration (`.claude.json` under `mcpServers.home-assistant.headers.Authorization`).
+
+### Method 1: MCP Server
 
 Use the `mcp__home-assistant` tool to query entity states, call services, list entities, and get history. This is the simplest method — no extra setup needed if the MCP server is already configured.
 
@@ -133,31 +185,11 @@ client.close()
 
 Don't spend time guessing — the log usually contains the answer.
 
-**Fetching HA core logs remotely:**
+**Fetch the log via the hierarchy in "Access hierarchy" above** — the tier depends on context and on *which* log:
+- **AppDaemon / any `/config` file**: read directly off the mounted volume or host when available; that's the top tier, not the API.
+- **HA Core log**: not on the mount (2025.11+) — REST `/api/hassio/core/logs?lines=100`, or `ha core logs` over SSH when Core is down.
 
-Since HA OS 2025.11, the `home-assistant.log` file is no longer written to `/config/`. Use the Supervisor proxy API or SSH as described below.
-
-**Primary — curl via Supervisor proxy API** (requires HA Core running):
-```bash
-# Fetch last 100 lines of HA core log (requires long-lived access token)
-curl -s -H "Authorization: Bearer $TOKEN" \
-  "http://<HA_IP>:8123/api/hassio/core/logs?lines=100" \
-  | sed 's/\x1b\[[0-9;]*m//g'
-```
-
-The token can be found in the MCP server configuration (e.g., `.claude.json` under `mcpServers.home-assistant.headers.Authorization`).
-
-Other useful log endpoints via the same API:
-- `/api/hassio/supervisor/logs` — Supervisor logs
-- `/api/hassio/addons/{addon_slug}/logs` — Add-on logs (e.g., `a0d7b954_appdaemon`)
-
-Note: `WebFetch` cannot reach local network IPs — use `curl` via the Bash tool.
-
-**Fallback — SSH + `ha core logs`** (works even when HA Core is down):
-
-If the API is unresponsive (HA Core crashed/hung), use SSH via paramiko to run `ha core logs` directly on the Supervisor. This requires the **Advanced SSH & Web Terminal** add-on to be installed — SSH is not available in HA by default. See **Method 3** in the Access Methods section for connection details.
-
-**AppDaemon logs** are typically mounted on the host filesystem and can be read directly (e.g., `/Volumes/config/appdaemon/logs/` or similar path depending on mount setup).
+`WebFetch` cannot reach local-network IPs — always use `curl` via the Bash tool for REST.
 
 **What to look for in logs:**
 - Errors from `homeassistant.helpers.storage` — storage write failures affect ALL state persistence
