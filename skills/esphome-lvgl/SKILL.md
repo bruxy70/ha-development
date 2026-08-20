@@ -880,6 +880,83 @@ On confirm, push to HA via `homeassistant.action` -- the round-trip through HA p
       entity_id: light.my_light
 ```
 
+### HA Actions That Return Data (`capture_response`)
+
+Some HA actions return a payload rather than just acting (`weather.get_forecasts`,
+`recorder.get_statistics`, …). Set `capture_response: true` and read the result in `on_success`,
+where it is exposed as a `JsonObjectConst` named `response`. `on_success` is **required** when
+`capture_response` is set. This is the only way to pull *bulk* data (multi-day forecast, history
+series) onto the display -- a `platform: homeassistant` sensor can only mirror one scalar/attribute.
+
+```yaml
+- homeassistant.action:
+    action: weather.get_forecasts
+    data:
+      entity_id: weather.home
+      type: daily
+    capture_response: true
+    on_success:
+      - lambda: |-
+          JsonArrayConst days = response["response"]["weather.home"]["forecast"];
+          for (int i = 0; i < 5 && i < (int) days.size(); i++) {
+            JsonObjectConst d = days[i];
+            float high = d["temperature"] | NAN;    // `| default` guards a missing key
+            std::string cond = d["condition"] | "";
+            // ...update widgets...
+          }
+    on_error:
+      - logger.log: "forecast fetch failed"
+```
+
+Note the payload nesting: `response["response"][<entity_id>]` -- the outer `"response"` key is
+always there, and the inner key is the entity id string, not a generic name.
+
+**Gotchas:**
+
+- **Scalar, not list.** ESPHome's `data:` validator rejects YAML lists here: `statistic_ids: [a, b]`
+  fails with `Must be string, got <class 'esphome.helpers.EList'>`. Pass a single value as a plain
+  scalar (`statistic_ids: sensor.foo`, `types: mean`). Same for any other list-typed action field.
+- **Computed arguments go in `data_template:`**, not `data:` -- that's where `!lambda` is allowed
+  (e.g. building an ISO timestamp for `start_time`).
+- **The device must be authorized** to perform HA actions (see the prerequisite above) -- a
+  response-capturing call fails just as silently as a fire-and-forget one when it isn't.
+- `recorder.get_statistics` is documented as admin-only in HA; verify on-device rather than
+  assuming the ESPHome device is allowed to call it.
+
+**Fetching a history series** (for a trend chart) with `recorder.get_statistics`. Align the window
+to whole hours *and* pass `end_time`, otherwise the still-accumulating current hour comes back as a
+bucket with no `mean` and the last point of the chart collapses to zero:
+
+```yaml
+- homeassistant.action:
+    action: recorder.get_statistics
+    data:
+      statistic_ids: sensor.battery_state_of_charge   # needs a state_class for LTS to exist
+      period: hour
+      types: mean
+    data_template:
+      start_time: !lambda |-
+        time_t now_epoch = id(ha_time).now().timestamp;
+        time_t hour_start = now_epoch - (now_epoch % 3600);   // last COMPLETE hour
+        auto t = ESPTime::from_epoch_utc(hour_start - 24 * 3600);
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%04d-%02d-%02dT%02d:%02d:%02d+00:00",
+                 t.year, t.month, t.day_of_month, t.hour, t.minute, t.second);
+        return std::string(buf);
+      end_time: !lambda |-
+        // ...same, at hour_start -- excludes the partial current hour...
+    capture_response: true
+    on_success:
+      - lambda: |-
+          JsonArrayConst buckets = response["response"]["statistics"]["sensor.battery_state_of_charge"];
+          // buckets[i]["mean"] -- may be absent for hours with no recorded data
+```
+
+Only entities with a `state_class` of `measurement`/`total`/`total_increasing` have long-term
+statistics; anything else returns nothing. Gaps are normal -- decide explicitly whether to carry
+the previous value forward or show a break, and if you carry it forward, **say so on screen**, or a
+guessed flat line is indistinguishable from a real one.
+
 ### Error Handling and Resilience
 
 ```yaml
@@ -2078,6 +2155,49 @@ binary_sensor:
       - lvgl.page.next
 ```
 
+### Trend Chart (there is no chart widget)
+
+ESPHome's LVGL component exposes no `chart:`. Two ways to plot a series, both fixed-point-count:
+
+- **Bar chart** -- a flex row of `bar:` widgets, one per sample, updated via `lv_bar_set_value()`.
+  Good for a value that is naturally per-slot (hourly tariff, per-day rainfall) and for showing
+  category colour per bar. Reads poorly for a smooth quantity like SoC or power.
+- **Line chart** -- a single `line:` widget re-pointed at runtime. Better for continuous values.
+
+For the line variant, keep the scaled Y values in a `globals:` array and rebuild the point list from
+it. Points are declared once at their fixed X positions; only Y is a lambda. Convert to pixel space
+when filling the array (Y is inverted: 0 = top):
+
+```yaml
+globals:
+  - id: chart_values           # pre-scaled to pixel-Y inside the chart area
+    type: float[24]
+    restore_value: false
+
+script:
+  - id: render_chart
+    then:
+      - lvgl.line.update:
+          id: chart_line
+          points:
+            - x: 0
+              y: !lambda return (int) id(chart_values)[0];
+            - x: 23
+              y: !lambda return (int) id(chart_values)[1];
+            # ...one entry per sample; note block style -- see YAML gotchas...
+```
+
+```cpp
+// filling it, for a 150px-tall area and a 0..100 range:
+id(chart_values)[i] = 150.0f - (v / 100.0f) * 150.0f;
+```
+
+Axes and grid are plain widgets: 1px `obj`s at computed offsets for gridlines, `label`s for the
+scale. Keep the grid sparse -- one line per *labelled* reference point, not one per sample -- and
+label the axis with real values (clock times, units), not sample indices. A dot at the last point
+plus a numeric readout of the current value matters more than density: a modal chart usually covers
+the live widget the user tapped.
+
 ### ESPHome Component Integration Table
 
 | LVGL Widget | ESPHome Platform | Purpose |
@@ -2156,12 +2276,96 @@ When implementing a page or feature, verify:
 - For touch zones: verify coordinate ranges match display dimensions
 - `scrollbar_mode: "off"` on containers to prevent scroll capture
 
+### A Child Widget Swallows Taps Meant for Its Container
+
+**Symptom:** `on_click` on a container fires only when you tap certain *parts* of it -- typically a
+thin margin around the edge and the icon/label above the graphic -- while taps on the main visual
+body (a gauge dial, its value/unit text, an image) do nothing.
+
+**Cause:** LVGL's base constructor makes **every** widget clickable:
+
+```c
+/* lv_obj.c -- lv_obj_constructor() */
+obj->flags = LV_OBJ_FLAG_CLICKABLE;
+```
+
+Subclasses may clear it again, and they are inconsistent about it: `lv_label` clears it (labels
+never block), but **`lv_scale` does not** (its constructor only clears `LV_OBJ_FLAG_SCROLLABLE`).
+Hit-testing walks children front-to-back and the first *clickable* one under the point wins, so any
+such child sitting on top of your container consumes the tap and the container's `on_click` never
+runs.
+
+This bites hardest with `meter:`, which ESPHome builds as a container holding an internal
+`lv_scale` sized `100% x 100%` -- it blankets the whole dial. Marking the `meter:` and any crop
+`arc:` as `clickable: false` is **not enough**: that inner scale has no `id`, so no YAML key can
+reach it. Clear the flag on the whole subtree at runtime instead:
+
+```yaml
+esphome:
+  on_boot:
+    - priority: -100          # after every component's setup() -- widgets exist by now
+      then:
+        - script.execute: make_gauges_fully_clickable
+
+script:
+  - id: make_gauges_fully_clickable
+    then:
+      - lambda: |-
+          lv_obj_t* roots[3] = { id(pv_gauge), id(ev_gauge), id(boiler_gauge) };
+          lv_obj_t* stack[128];
+          int sp = 0;
+          for (int r = 0; r < 3; r++) stack[sp++] = roots[r];
+          while (sp > 0) {
+            lv_obj_t* o = stack[--sp];
+            uint32_t n = lv_obj_get_child_count(o);
+            for (uint32_t i = 0; i < n; i++) {
+              lv_obj_t* c = lv_obj_get_child(o, i);
+              lv_obj_remove_flag(c, LV_OBJ_FLAG_CLICKABLE);
+              if (sp < 128) stack[sp++] = c;
+            }
+          }
+```
+
+Clearing `CLICKABLE` affects only hit-testing, never drawing. `LV_OBJ_FLAG_EVENT_BUBBLE` on the
+child is the alternative when the child legitimately needs its own events too.
+
+**Diagnosing which child is to blame:** the *shape* of the dead zone identifies it -- match the
+working margin against the child's geometry (e.g. a 188px container with a 166px scale centered in
+it leaves exactly the ~11px side strips that still work). Confirm it in the generated C++ rather
+than guessing; see "Read the generated code" below.
+
+**Do not confuse this with a parent-bounds problem.** A child drawn outside its parent's box is
+genuinely unreachable (hit-testing gates recursion on the parent's own area), but
+`overflow_visible: true` only expands that area by `ext_draw_size`, which is 0 without a
+shadow/outline -- so it is not a fix for ordinary overflow.
+
+### Read the Generated Code Instead of Guessing
+
+ESPHome YAML is a code generator, and LVGL behaviour is decided by flags and geometry you never
+wrote by hand. When a widget misbehaves, both are on disk after a compile:
+
+- **Generated C++:** `.esphome/build/<device>/src/main.cpp` -- shows every widget actually created,
+  in z-order, with each `lv_obj_add_flag`/`remove_flag`, style and size call, plus `#line`
+  references back to your YAML. This is where you see the children ESPHome created implicitly and
+  whether a YAML key (`clickable: false`, …) really reached the object you meant.
+- **The exact LVGL source in use:** `.esphome/build/<device>/managed_components/lvgl__lvgl/` --
+  version-correct constructors and hit-test logic, so widget defaults are a `grep`, not a memory.
+  Check `lv_version.h` first; ESPHome ≤2026.3 vendors LVGL v8, 2026.4+ v9.x, and defaults differ.
+
+Both are build artifacts -- read-only, regenerated on each compile, never edited by hand.
+
 ### Compilation Errors in Lambdas
 - `return x.c_str()` -- for text_sensor to label text
 - `return std::string("text")` -- for string literals
 - `static_cast<int>(x)` -- for float to int conversion
 - `!lambda return x;` -- single line needs `return`
 - `!lambda |- \n  code` -- multiline block scalar
+- **Not every `id()` is an `lv_obj_t*`.** Most widget ids resolve to the raw object, but some are
+  ESPHome wrapper classes -- `line:` gives `LvLineType*`, meter line indicators give
+  `IndicatorLine*`. Passing those to a C API fails with
+  `cannot convert 'esphome::lvgl::LvLineType* const' to 'lv_obj_t*'`. Use the YAML action instead
+  (`lvgl.widget.show:` / `lvgl.widget.hide:` work on any widget, wrapper or not), or the wrapper's
+  own method (`id(my_needle).set_value(v)`). Check the type in the generated `main.cpp` when unsure.
 
 ### ESPHome YAML Syntax Gotchas
 - **init_sequence delay**: `- delay 120ms` (plain string), NOT `- delay: 120ms` (colon makes it a dict key)
@@ -2179,7 +2383,20 @@ When implementing a page or feature, verify:
       type: binary
       id: my_icon
   ```
-- **Multiple `on_boot:` entries**: Allowed with different priorities in the same config
+- **Multiple `on_boot:` entries**: Allowed with different priorities in the same config. Use
+  `priority: -100` for anything that has to touch LVGL widgets at startup -- it runs after every
+  component's `setup()`, so the widget tree is guaranteed to exist.
+- **`!lambda` cannot live inside YAML flow mappings**: `- { x: 0, y: !lambda return v; }` dies with
+  `expected ',' or '}'` because the tag swallows the rest of the line. Expand to block style:
+  ```yaml
+  # CORRECT:
+  - x: 0
+    y: !lambda return v;
+
+  # WRONG:
+  - { x: 0, y: !lambda return v; }
+  ```
+  Flow style is fine for fully static entries -- this only bites where a lambda is involved.
 - **Display rotation is NOT an LVGL setting**: `rotation:` belongs on the `display:` platform component, NOT under `lvgl:`. LVGL renders to whatever the display driver provides -- to rotate the output, set `rotation: 90/180/270` on the display component and adjust touchscreen `swap_xy`/`mirror_x`/`mirror_y` to match.
 
 ---
@@ -2201,3 +2418,13 @@ When implementing a page or feature, verify:
 13. **Use `if_nan`** in text format to handle NaN/Inf sensor values gracefully.
 14. **Multiple LVGL instances** are supported for multi-display setups.
 15. **Binary image format** is recommended for MDI icons: `image: { binary: [{ file: "mdi:icon-name", id: icon_id, resize: 32x32 }] }`
+16. **A tappable container must be tappable everywhere it looks tappable.** Widgets ESPHome creates
+    implicitly (notably `meter:`'s inner `lv_scale`) are clickable by default and will eat taps on
+    the part users actually aim at. See Troubleshooting → "A child widget swallows taps".
+17. **When a widget misbehaves, read the generated `main.cpp` and the vendored LVGL source** before
+    theorising -- both sit under `.esphome/build/<device>/` after any compile and settle questions
+    about flags, z-order, geometry and version defaults outright.
+18. **Anything fetched from HA can be missing.** Guard every `response[...]`/sensor read with a
+    default or NaN check, reset shared widgets when a fetch fails (or a stale reading stays on
+    screen under a new title), and make interpolated/carried-forward data visibly distinct from
+    measured data.

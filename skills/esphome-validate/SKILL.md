@@ -32,6 +32,20 @@ device** — only flashing needs hardware.
 **If `esphome` isn't installed:** `pip install esphome` (or `uv tool install esphome`), or use
 the ESPHome dashboard's **Validate** / **Install → Manually** which runs the same two stages.
 
+**A build failure isn't always your config.** A stale build tree fails before it ever compiles your
+code — e.g. `ERROR: File .component_hash or CHECKSUMS.json for component "lvgl/lvgl" in the managed
+components directory does not exist or cannot be parsed`, or other cmake/component-discovery errors
+naming `managed_components`. Fix with `esphome clean <file>.yaml`, then compile again (the first
+rebuild is slow — the framework and components are re-fetched). Reach for this when the error text
+is about the toolchain/components rather than a line in your YAML; don't start editing the config.
+
+**The build tree is also the best documentation you have.** After a successful compile,
+`.esphome/build/<device>/` holds ground truth worth reading when behaviour is puzzling:
+`src/main.cpp` (every component and widget actually generated, with `#line` refs back to your YAML)
+and `managed_components/` (the exact vendored library sources, e.g. `lvgl__lvgl/` — check its
+`lv_version.h`, since defaults differ between LVGL v8 and v9). Read these before theorising about
+why a widget or component behaves the way it does. Build artifacts: read-only, never hand-edited.
+
 ## Flash + verify (needs the device)
 
 `esphome run <file>.yaml` (USB or OTA) flashes and streams logs. Verify: boots, Wi-Fi + HA API
