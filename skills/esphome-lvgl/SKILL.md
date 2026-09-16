@@ -16,10 +16,14 @@ Comprehensive reference for writing ESPHome YAML configurations for HMI (Human-M
 
 **LVGL Component:**
 - ESPHome LVGL component: https://esphome.io/components/lvgl/
-- ESPHome LVGL widgets: https://esphome.io/components/lvgl/widgets.html
-- ESPHome LVGL layouts: https://esphome.io/components/lvgl/layouts.html
+- ESPHome LVGL widgets: https://esphome.io/components/lvgl/widgets/
+- ESPHome LVGL layouts: https://esphome.io/components/lvgl/layouts/
+- ESPHome LVGL animations: https://esphome.io/components/lvgl/animation/
 - ESPHome LVGL cookbook: https://esphome.io/cookbook/lvgl/
-- LVGL v8 docs: https://docs.lvgl.io/master/
+- LVGL upstream docs: https://docs.lvgl.io/master/
+
+**Doc currency:** this skill is synced to **ESPHome 2026.9**. When working against a newer
+release, check the changelog for `[lvgl]` lines before trusting the syntax here.
 
 ---
 ---
@@ -987,9 +991,11 @@ LVGL (Light and Versatile Graphics Library) is an ESPHome component that provide
 ## LVGL Core Rules
 
 1. **LVGL version depends on the ESPHome release.** ESPHome **≤ 2026.3** uses LVGL **v8**;
-   ESPHome **2026.4+** moved the `meter` widget onto LVGL **v9.4**'s `lv_scale`. Most YAML is
-   unchanged across the bump, but a few properties are deprecated and one C API was removed —
-   see "ESPHome 2026.4 / LVGL v9.4 migration" below. Match APIs to your target ESPHome version.
+   ESPHome **2026.4+** moved the `meter` widget onto LVGL **v9.4**'s `lv_scale`; **2026.9**
+   ships LVGL **9.5** (radial/conical gradients). Most YAML is unchanged across the bumps, but a
+   few properties are deprecated and one C API was removed — see "ESPHome 2026.4 / LVGL v9.4
+   migration" and "ESPHome 2026.5-2026.9 LVGL additions" below. Match APIs to your target
+   ESPHome version.
 2. **Color depth is RGB565 only** (16-bit, 2 bytes per pixel).
 3. **Display must be configured with:**
    - `auto_clear_enabled: false`
@@ -1014,6 +1020,7 @@ configs, **compile first** — deprecations only warn; one C API removal hard-fa
 | Old | New |
 |-----|-----|
 | `r_mod: N` (meter line indicator) | `length: -abs(N)` |
+| `r_mod: N` (meter **arc** indicator) | `padding: N` |
 | `disp_bg_color: 0xRRGGBB` (under `lvgl:`) | `bottom_layer: { bg_color: 0xRRGGBB, bg_opa: COVER }` |
 | `display: { platform: ili9xxx, ... }` | `display: { platform: mipi_spi, ... }` (sub-options carry over; `model: GC9A01A` still valid) |
 
@@ -1028,8 +1035,30 @@ id(my_needle).set_value(value);
 ```
 
 `id(needle_id)` resolves to the `IndicatorLine` instance. Apply renames one at a time and
-re-compile between each. (The `r_mod` examples elsewhere in this skill still compile on 2026.4
-but emit deprecation warnings — prefer `length:` on new work.)
+re-compile between each. (`r_mod` is still accepted as a deprecated alias — prefer `length:` on
+a line indicator and `padding:` on an arc indicator for new work.)
+
+---
+
+## ESPHome 2026.5-2026.9 LVGL additions
+
+Nothing here is a breaking change; all of it is new surface the older syntax in this skill
+predates. Listed oldest first so you can tell what your target release actually has.
+
+| Release | Addition | Where |
+|---------|----------|-------|
+| 2026.6 | `rounded` on meter **arc** indicators | "meter" widget below |
+| 2026.7 | `animations:` section + `lvgl.animation.start` / `.stop` | "Animations" below |
+| 2026.7 | `paused:` / `resume_on_input:` component options | "LVGL Component Configuration" |
+| 2026.7 | `lvgl.display.set_rotation` + `on_landscape` / `on_portrait` | "LVGL Component Actions/Triggers" |
+| 2026.7 | `mapping:` + `value:` as a text/image source | "Mapping lookups" below |
+| 2026.8 | `lvgl.theme.update` action | "LVGL Component Actions" |
+| 2026.8 | `lvgl.widget.set_z_index` action | "Widget Actions (Universal)" |
+| 2026.9 | `table` and `list` widgets, `container` widget | "Widget Types" |
+| 2026.9 | radial + conical gradients (LVGL 9.5) | "Gradients" below |
+
+**Still absent as of 2026.9:** there is no `chart:` widget. See "Trend Chart" in the patterns
+section for the bar/line workarounds.
 
 ---
 
@@ -1049,10 +1078,29 @@ lvgl:
   touchscreens:
     - touchscreen_id
   page_wrap: true                # Wrap from last to first page
+  rotation: 90                   # 0|90|180|270 -- rotates display AND touch together.
+                                 # Do NOT also set rotation on display: or transform
+                                 # the touchscreen. HW-accelerated via PPA on ESP32-P4.
+  paused: false                  # 2026.7+: boot paused; nothing drawn until lvgl.resume
+  resume_on_input: true          # 2026.7+: touch/button release or encoder resumes (default)
+  theme: {...}                   # Per-widget-type default styles + dark_mode
+  gradients: [...]               # 2026.9: see "Gradients"
+  animations: [...]              # 2026.7: see "Animations"
   style_definitions: [...]
   pages: [...]
   top_layer:                     # Always-visible overlay
     widgets: [...]
+```
+
+**`theme:`** applies default styles to every widget of a type, and `dark_mode: true` enables
+LVGL's built-in dark theme. Both coexist — enable dark mode and still override per type:
+
+```yaml
+lvgl:
+  theme:
+    dark_mode: true
+    button:
+      border_width: 2
 ```
 
 ---
@@ -1062,6 +1110,75 @@ lvgl:
 - CSS color names: `springgreen`, `white`, `black`, etc.
 - ESPHome color IDs
 - In lambdas: `lv_color_hex(0xRRGGBB)`
+
+## Gradients
+
+Declared under the top-level `gradients:` key, then applied to a widget with the `bg_grad`
+style option (`bg_grad: my_gradient_id`). Each entry needs `direction` and at least two `stops`:
+
+- **direction** (required): `hor` (`horizontal`), `ver` (`vertical`), `linear`, `radial`, `conical`
+- **stops** (required, >= 2): each with `color`, optional `opa` (defaults `COVER`), and `position`
+  — a float `0.0`-`1.0`, a percentage, or an integer `0`-`255`
+- `linear` / `radial` / `conical` each require a same-named sub-block (below)
+
+`hor`/`ver` are shorthand spanning the whole width/height. The other three take explicit
+coordinates — pixels or a percentage of the widget's size, and may be negative or >100% to put a
+point outside the widget — plus an `extend` option for pixels falling outside the stop range:
+`PAD` (default, nearest stop's color spreads out), `REPEAT` (tiles), `REFLECT` (mirrored tiles).
+
+```yaml
+lvgl:
+  gradients:
+    # Simple: spans the widget horizontally
+    - id: hue_bar
+      direction: hor
+      stops:
+        - color: 0xFF0000
+          position: 0
+        - color: 0x0000FF
+          position: 255
+
+    # linear: arbitrary line, not confined to the widget bounds
+    - id: diagonal
+      direction: linear
+      linear:
+        from_x: 0%
+        from_y: 0%
+        to_x: 100%
+        to_y: 100%
+        extend: PAD
+      stops: [...]
+
+    # radial (2026.9): center -> to sets the radius; optional off-center focal point
+    - id: spotlight
+      direction: radial
+      radial:
+        center_x: 50%
+        center_y: 50%
+        to_x: 100%
+        to_y: 50%
+        focal_x: 40%        # optional, must be paired with focal_y
+        focal_y: 40%
+        focal_radius: 10    # default 0
+        extend: PAD
+      stops: [...]
+
+    # conical (2026.9): sweeps around a center like clock hands
+    - id: sweep
+      direction: conical
+      conical:
+        center_x: 50%
+        center_y: 50%
+        start_angle: 0      # default 0
+        end_angle: 360      # default 360
+        extend: PAD
+      stops: [...]
+```
+
+For `conical`, `extend` only matters when `start_angle`/`end_angle` are less than a full circle
+apart. A `radial` gradient varies only color along its radius, so "white center fading to full
+color at the edge" needs a second white-to-transparent radial gradient layered in its own widget
+on top; set `radius: circle` on both (equal width/height) to clip the squares to a circle.
 
 ## Opacity Formats
 - Strings: `TRANSP` (transparent) or `COVER` (opaque)
@@ -1109,7 +1226,7 @@ For `align_to` (relative to sibling): prefix with `OUT_` e.g. `OUT_TOP_MID`, `OU
 - **Semicircle gauges (180deg)** are the most readable for dashboard tiles
 - **Use the crop pattern:** meter + black arc overlay to clean up the center, then center cap (small circle) to cover needle hub
 - **tick_style gradient** (preferred over arc indicators): dense ticks with `local: true` gradient fill look dramatically more professional than flat-color arcs. Use `major:` ticks for scale reference marks
-- **Needle visibility**: `r_mod` must be POSITIVE (e.g. +5) so the needle extends past the tick edge. Negative `r_mod` with a crop arc makes the needle nearly invisible
+- **Needle visibility**: the needle must extend past the tick edge, or a crop arc makes it nearly invisible. On 2026.4+ size the needle with `length:` (a `%` or px of the scale radius) and nudge arcs with `padding:`; the old `r_mod` alias needed a POSITIVE value (e.g. +5) for the same effect
 - **Min/max labels**: position BELOW the diameter line (`y = meter_y_offset + gap`). Compute positions from meter geometry, don't guess pixel offsets
 - **Contrast**: all text on `0x1E1E1E` card background must be at least `0x909090` (~4.5:1). Lower contrast text is unreadable at arm's length on small displays
 - **Scrolling**: every `obj` container needs BOTH `scrollbar_mode: "off"` AND `scrollable: false`. The scrollbar property alone only hides the visual; content still scrolls on touch
@@ -1150,7 +1267,7 @@ style_definitions:
 
 ### Complete Style Properties
 
-**Background:** `bg_color`, `bg_opa`, `bg_grad` (gradient ID), `bg_grad_color`, `bg_grad_dir` (NONE|HOR|VER), `bg_main_stop`, `bg_grad_stop`, `bg_dither_mode` (NONE|ORDERED|ERR_DIFF), `bg_image_src`, `bg_image_opa`, `bg_image_recolor`, `bg_image_recolor_opa`
+**Background:** `bg_color`, `bg_opa`, `bg_grad` (gradient ID -- see "Gradients" for `linear`/`radial`/`conical`), `bg_grad_color`, `bg_grad_dir` (NONE|HOR|VER -- two-color shorthand only), `bg_main_stop`, `bg_grad_stop`, `bg_dither_mode` (NONE|ORDERED|ERR_DIFF), `bg_image_src`, `bg_image_opa`, `bg_image_recolor`, `bg_image_recolor_opa`
 
 **Border:** `border_width`, `border_color`, `border_opa`, `border_post` (bool), `border_side` (TOP|BOTTOM|LEFT|RIGHT|INTERNAL|NONE)
 
@@ -1241,6 +1358,20 @@ Generic container that catches touches. Used for grouping and layout.
     widgets:
       - label: ...
       - button: ...
+```
+
+### container
+Functionally identical to `obj` but with **no styles applied**, so it is invisible until you style
+it or fill it. Defaults to `width: 100%` / `height: 100%`. Prefer it over `obj` for pure layout
+scaffolding — it saves having to zero out `bg_opa`/`border_width` on every wrapper.
+```yaml
+- container:
+    align: CENTER
+    width: 80%
+    height: 80%
+    outline_width: 1        # set temporarily to see where it is
+    widgets:
+      - ...
 ```
 
 ### label
@@ -1464,16 +1595,19 @@ Gauge with scales, needles, tick marks, and arc indicators.
             value: 0
             width: 4
             color: 0xFFFFFF
-            r_mod: 12          # Length offset from scale radius
+            length: 80%        # % or px; default 100% of scale radius (was `r_mod`)
+            radial_offset: 0   # Offset of the needle from the scale centre
+            rounded: true      # Rounded needle end points
         - arc:                 # Arc segment indicator
             color: 0xFF0000
-            r_mod: 10          # Radius offset from scale
+            padding: 10        # Offset from scale radius, may be negative (was `r_mod`)
             width: 20
+            rounded: false     # 2026.6+: round the arc's start/end
             start_value: 0
             end_value: 50
         - arc:
             color: 0x00FF00
-            r_mod: 10
+            padding: 10
             width: 20
             start_value: 50
             end_value: 100
@@ -1485,6 +1619,9 @@ Gauge with scales, needles, tick marks, and arc indicators.
 ```
 
 **Actions:** `lvgl.indicator.update` (id, value), `lvgl.meter.update`
+
+**Key names:** `padding` (arc) and `length` (line) replaced `r_mod` in 2026.4. `r_mod` still
+compiles as a deprecated alias but warns; see the migration table above for the mapping.
 
 ### image (img)
 Displays images defined in the ESPHome image component.
@@ -1735,6 +1872,98 @@ lvgl:
 
 Hidden by default. Show with `lvgl.widget.show: my_msgbox`.
 
+### table (2026.9+)
+Rows and columns of **text** cells. Cells hold text only — no images, no per-cell colors (the
+`items` part styles every cell uniformly), so it is not a substitute for a flex/grid layout of
+labels when you need icons or per-column styling.
+```yaml
+- table:
+    id: readings_table
+    width: 100%
+    row_count: 3             # defaults to len(rows), or 0
+    column_count: 2          # defaults to the widest row, or 0
+    columns:                 # per column, in order
+      - width: 40%           # % is of the table's content width, recalculated on resize
+      - width: 60%
+    rows:
+      - ["Name", "Value"]    # bare list of cells...
+      - cells:               # ...or a dict per cell
+          - text: "Temperature"
+          - text: "22.5"
+            merge_right: false   # draw merged with the cell to its right
+            text_crop: false     # crop instead of wrapping when it doesn't fit
+    selected_row: 0          # giving only one of row/column selects the whole row/column
+    selected_column: 0
+    on_value:                # selected cell changed (by touch OR by lvgl.table.update)
+      - logger.log:
+          format: "Selected cell: %u, %u"
+          args: [ row, column ]
+```
+**Actions:**
+- `lvgl.table.update` — any of the options above
+- `lvgl.table.cell.update` — `id`, `row`, `column` (both zero-based) plus at least one of
+  `text`, `merge_right`, `text_crop`. This is the one to use for live data:
+  ```yaml
+  - lvgl.table.cell.update:
+      id: readings_table
+      row: 0
+      column: 1
+      text: !lambda return to_string(id(my_sensor).state);
+  ```
+Declare a pre-sized empty table (`row_count`/`column_count`, no `rows:`) when every cell is
+filled at runtime.
+
+### list (2026.9+)
+A plain scrollable container **populated at runtime by action**, not by a fixed `widgets:` list.
+Use it for content unknown until the device runs (scan results, a variable-length set of open
+doors); for a fixed set of rows a flex `obj`/`container` is simpler.
+```yaml
+- list:
+    id: my_list
+    width: 200
+    height: 150
+    pad_row: 4               # vertical spacing between entries
+    on_add:                  # fires per entry added; index in `list_index`
+      - logger.log:
+          format: "Entry added at %d"
+          args: [ list_index ]
+    on_remove:               # fires per entry removed; clear fires it last-index-down-to-0
+      - logger.log:
+          format: "Entry removed at %d"
+          args: [ list_index ]
+```
+**Actions** (all take `id`; `add_text`/`add` take an optional templatable `index`, default = end):
+- `lvgl.list.add_text` — a plain text entry, typically a section header. Needs `text`.
+- `lvgl.list.add` — an entry built from any other widget type, with its children and triggers.
+  Exactly one widget key alongside `id`, configured as it would be under `widgets:`.
+- `lvgl.list.remove` — `index` (required), removes that entry and its children
+- `lvgl.list.clear` — removes every entry
+
+Entries added via `lvgl.list.add` are built fresh on each run and freed automatically on
+`remove`/`clear`. There is no YAML loop, so building N entries from a sensor means a `repeat:`
+with an index lambda — often more code than one multi-line label.
+
+A trigger on an added widget does **not** receive its row index (the widget config is shared with
+every other use of that type). Get it in a lambda from the `event` variable:
+```cpp
+int row = lvgl::lv_list_get_row_index(id(my_list),
+            static_cast<lv_obj_t *>(lv_event_get_target(event)));
+// returns -1 if the widget isn't inside the list
+```
+
+### Mapping lookups (2026.7+)
+A label's text or an image's `src` can be looked up from a `mapping:` component instead of
+being built with a lambda — useful for enum-to-string / enum-to-icon translation:
+```yaml
+- label:
+    mapping: string_map      # a mapping component whose `to` type is `string`
+    value: !lambda return id(my_state).state;   # the lookup key, matching the `from` type
+- image:
+    src:
+      mapping: icon_map      # mapping whose `to` type is `image`
+      value: !lambda return id(my_state).state;
+```
+
 ---
 
 ## Pages and Navigation
@@ -1797,6 +2026,18 @@ These actions work on ALL widget types:
 - **`lvgl.widget.redraw`**: Force redraw of widget(s) or full screen
 - **`lvgl.widget.refresh`**: Re-evaluate lambda-based properties
 - **`lvgl.widget.focus`**: Set keyboard/encoder focus
+- **`lvgl.widget.set_z_index`** (2026.8+): Change stacking order among **siblings** only; touches
+  no other property. `position:` is `top`, `bottom`, `up`, `down`, or an integer sibling index
+  (`0` = back-most, positive counts from the back, negative from the front so `-1` == `top`).
+  ```yaml
+  - lvgl.widget.set_z_index:
+      id: popup_box
+      position: top
+  - lvgl.widget.set_z_index:
+      id: [icon_1, icon_2]
+      position: down
+  ```
+  Useful for raising a modal above siblings without a dedicated `top_layer`.
 
 ---
 
@@ -1817,6 +2058,36 @@ Available on ALL widget types:
 
 ---
 
+## LVGL Component Actions
+
+Act on the LVGL instance rather than one widget. All take an optional `lvgl_id:`, needed only
+when more than one LVGL instance is configured.
+
+- `lvgl.pause` / `lvgl.resume` — stop/restart drawing. `lvgl.pause` takes
+  `show_snow: true` to scatter random pixels as burn-in relief while paused.
+- `lvgl.update` — re-evaluate the component's own lambda-based properties
+- `lvgl.style.update` — update a `style_definitions:` entry at runtime
+- `lvgl.theme.update` (2026.8+) — restyle **every** widget of a type at once, e.g. to swap an
+  accent color without touching each widget. Takes a dict shaped like `theme:` — keyed by widget
+  type, optionally nested by part and state. A type never declared under `theme:` is created on
+  first reference (so it has no visual effect until the action first fires), and every affected
+  widget is refreshed automatically — no follow-up redraw needed.
+  ```yaml
+  - lvgl.theme.update:
+      button:
+        border_width: 4
+        pressed:
+          border_color: 0xFF0000
+  ```
+- `lvgl.display.set_rotation` (2026.7+) — `0`, `90`, `180` or `270`, templatable. The angle is
+  **absolute**, not relative, so the current rotation doesn't affect the result.
+  ```yaml
+  - lvgl.display.set_rotation: 90
+  - lvgl.display.set_rotation: !lambda "return id(my_rotation_number).state;"
+  ```
+- `lvgl.page.next` / `lvgl.page.previous` / `lvgl.page.show`
+- `lvgl.animation.start` / `lvgl.animation.stop` — see "Animations"
+
 ## LVGL Component Triggers
 
 - `on_idle`: Display inactive for `timeout` duration
@@ -1828,6 +2099,10 @@ Available on ALL widget types:
   ```
 - `on_pause`, `on_resume`, `on_boot`
 - `on_draw_start`, `on_draw_end` (useful for e-paper)
+- `on_landscape` / `on_portrait` (2026.7+): fire when the effective width/height ratio changes —
+  `on_landscape` when it becomes wider than tall (a square display counts as landscape),
+  `on_portrait` when taller than wide. The matching one **also fires once at boot** to establish
+  the initial orientation; later changes normally come from `lvgl.display.set_rotation`.
 
 ## LVGL Conditions
 
@@ -1853,6 +2128,93 @@ lvgl:
   on_resume:
     then:
       - light.turn_on: back_light
+```
+
+---
+
+## Animations (2026.7+)
+
+An animation interpolates one or more **style properties** on one or more widgets from `from` to
+`to` across `duration`. Declared under the top-level `animations:` key and referenced by `id`.
+
+```yaml
+lvgl:
+  animations:
+    - id: slide
+      duration: 1s             # default 5s
+      start_delay: 0s          # delay before the first value change
+      auto_start: true         # start at boot; default false
+      loop: true               # restart on completion; default false
+      timing: ease_in_out      # default: linear
+      widgets:
+        - id: box
+          x:
+            from: 0
+            to: 200
+          y:
+            from: 0
+            to: 100
+      on_start: [...]          # runs each start, after start_delay
+      on_stop: [...]           # runs on completion, restart, or lvgl.animation.stop
+```
+
+Every listed property and widget animates together over the same `duration` and `timing`.
+
+**Animatable properties** — position/size (`x`, `y`, `translate_x/y`, `translate_radial`,
+`min/max_width`, `min/max_height`, `length`), transforms (`transform_width/height/rotation/
+skew_x/skew_y/pivot_x/pivot_y`), colors (`bg_color`, `bg_grad_color`, `border_color`,
+`outline_color`, `line_color`, `text_color`, `arc_color`, `shadow_color`, `drop_shadow_color`,
+`image_recolor`, `bg_image_recolor`, `recolor`, …), opacities (`opa`, `opa_layered`, `bg_opa`,
+`arc_opa`, `image_opa`, `text_opa`, `shadow_opa`, `color_filter_opa`, …), and border/line/shadow/
+text metrics (`border_width`, `line_width`, `shadow_width/spread/offset_x/offset_y`,
+`blur_radius`, `text_letter_space`, `text_line_space`, …).
+
+> **Colors cannot be animated from a lambda** — a `from`/`to` for a color property must be a
+> constant. Numeric properties may use lambdas, evaluated once per start (with no arguments), so
+> they can randomise or compute each run's endpoints:
+> ```yaml
+> x:
+>   from: !lambda "return random_uint32() % 200;"
+>   to: 200
+> ```
+
+**Timing functions** — a single one, or a list applied in order. Parameterless ones are a bare
+string; with parameters use a mapping with `type:`:
+
+| Timing | Parameters |
+|--------|-----------|
+| `round_trip` | `pause` (percentage of total duration spent paused between the halves; default 0) |
+| `ease_in_out` | `weight` (0-100%, how strongly; default `100%`) |
+| `gravity` | `acceleration` (float, default `0.5`), `bounce` (0-1, speed retained per bounce, default `0.5`) |
+
+```yaml
+  animations:
+    - id: bounce_in
+      duration: 2s
+      timing:
+        - type: gravity
+          bounce: 0.3
+          acceleration: 0.8
+      widgets:
+        - id: box
+          y:
+            from: 0
+            to: 200
+```
+
+**Actions** — `lvgl.animation.start` restarts from the beginning if already running, and its
+`duration` / `start_delay` / `loop` options override the configured values for this **and
+subsequent** runs. `lvgl.animation.stop` leaves properties at their current values and fires
+`on_stop`; stopping a non-running animation is a no-op.
+
+```yaml
+- lvgl.animation.start: slide          # single ID shorthand
+- lvgl.animation.start:
+    id: [slide, fade]
+    duration: 2s
+    loop: false
+- lvgl.animation.stop: slide
+- lvgl.animation.stop: [slide, fade]
 ```
 
 ---
@@ -1921,6 +2283,8 @@ Widget tree order: `icon → name label → meter → crop arc → center cap �
                   width: 3
                   color: 0xFFFFFF
                   r_mod: 5       # POSITIVE: extends past ticks for visibility
+                                 # (deprecated alias; 2026.4+ name is `length:` --
+                                 #  these values are field-verified, so re-tune on migration)
                   value: 0
       - arc:                     # Crop arc hides meter center
           width: 84              # or 66 for small
@@ -2081,7 +2445,7 @@ A meter `line` indicator makes an excellent needle for gauges. To show only the 
             id: my_needle
             width: 4
             color: 0xFFFFFF
-            r_mod: -2
+            r_mod: -2          # deprecated alias for `length:` -- see migration table
             value: 0
 
 # 3. Dark circle mask (covers inner portion of needle)
@@ -2157,7 +2521,9 @@ binary_sensor:
 
 ### Trend Chart (there is no chart widget)
 
-ESPHome's LVGL component exposes no `chart:`. Two ways to plot a series, both fixed-point-count:
+ESPHome's LVGL component exposes no `chart:` — still true as of 2026.9. (The 2026.9 `table`
+widget is text cells only, so it's an alternative for a *tabular* readout, not for plotting.)
+Two ways to plot a series, both fixed-point-count:
 
 - **Bar chart** -- a flex row of `bar:` widgets, one per sample, updated via `lv_bar_set_value()`.
   Good for a value that is naturally per-slot (hourly tariff, per-day rainfall) and for showing
