@@ -44,7 +44,7 @@ Run these cheap checks (skip any you already know from context):
 |---|---|
 | On the HA host / an SSH terminal into it? | `command -v ha` succeeds **and** `/config` is a real local dir (not a network mount) |
 | Inside a container (Core / add-on)? | `/.dockerenv` exists, or `/proc/1/cgroup` mentions `docker` |
-| HA volume mounted on a dev machine? | a config dir exists off-host — e.g. `ls /Volumes/config` (mac), `\\HA\config` (Windows), or a bind-mount path. AppDaemon logs then live at `<mount>/appdaemon/logs/*.log` |
+| HA volume mounted on a dev machine? | try the OS default(s) first, don't just ask: **macOS** → `ls /Volumes/config` (the standard Samba/AFP mount point when the share is named "config"); **Windows** → `\\HA\config` or a mapped drive letter; **Linux** → check common bind-mount points (`/mnt/config`, `~/ha-config`) or `findmnt \| grep config`. Only ask the user for their mount path if none of these exist. AppDaemon logs then live at `<mount>/appdaemon/logs/*.log` |
 | API reachable via MCP? | the `mcp__home-assistant` tool is present in this session |
 | API reachable via REST? | `curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOKEN" http://<HA_IP>:8123/api/` returns `200` |
 | SSH available? | Advanced SSH & Web Terminal add-on installed, then a `paramiko` connect succeeds (Method 3). **Usually absent — never assume it; probe or ask.** |
