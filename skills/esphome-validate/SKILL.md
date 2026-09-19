@@ -1,9 +1,6 @@
 ---
 name: esphome-validate
 description: Validation gate for ESPHome device configs (incl. LVGL displays) — the success criteria a config must meet before flashing. Use after editing an ESPHome YAML, when asked to "validate", "compile", or "check" a config, before an OTA/flash, or when running an ESPHome change through a loop. Covers offline config/compile checks and the incremental deploy-and-monitor discipline.
-allowed_tools:
-  - Bash
-  - mcp__home-assistant
 ---
 
 # ESPHome validation gate

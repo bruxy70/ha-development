@@ -1,7 +1,6 @@
 ---
 name: svg-rendering
 description: SVG rendering reference for producing accurate HMI display mockups. Covers coordinate systems, paths, arcs, text positioning, clipping, gradients, z-ordering, and provides ready-to-use gauge templates with computed geometry.
-allowed-tools: Read, Grep
 ---
 
 # SVG Rendering Reference for HMI Display Mockups

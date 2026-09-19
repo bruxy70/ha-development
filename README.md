@@ -1,6 +1,6 @@
 # ha-development
 
-A Claude Code plugin for Home Assistant and ESPHome development. Provides skills with non-obvious syntax, common pitfalls, and best practices drawn from current documentation — plus specialized agents for the full development workflow.
+A Codex and Claude Code plugin for Home Assistant and ESPHome development. Provides skills with non-obvious syntax, common pitfalls, and best practices drawn from current documentation — plus specialized agents for the full development workflow.
 
 ## Skills
 
@@ -35,7 +35,7 @@ A Claude Code plugin for Home Assistant and ESPHome development. Provides skills
 This plugin also includes setup instructions for connecting Claude Code to your HA instance via the built-in MCP server. Once connected, Claude can query entities, call services, and interact with HA directly.
 
 Quick setup:
-1. In HA: **Settings → Devices & Services → Add Integration → Model Context Protocol**
+1. In HA: **Settings → Devices & Services → Add Integration → Model Context Protocol Server**
 2. In HA: **Profile → Long-Lived Access Tokens → Create Token**
 3. Add to `~/.claude.json`:
 ```json
@@ -64,3 +64,51 @@ See the **ha-mcp-setup** skill for full details and troubleshooting.
 ## License
 
 MIT
+
+## Codex compatibility
+
+The Codex manifest is `.codex-plugin/plugin.json`; the Claude manifests remain under
+`.claude-plugin/`. Both clients use the shared `skills/` source. The validation skills
+`ha-validate` and `esphome-validate` define the checks; `update-from-docs` refreshes references.
+
+For a portable, repository-scoped setup without a marketplace, link the skills directory:
+
+```sh
+mkdir -p /path/to/your/project/.agents
+ln -s /path/to/ha-development/skills /path/to/your/project/.agents/skills
+```
+
+If the project already has `.agents/skills`, link only the desired individual skill folders
+inside it, preserving existing project skills. Do not install both linked skills and the
+same plugin globally unless duplicate skill entries are intended.
+
+For a Codex plugin installation, register this directory in a local Codex marketplace
+using the plugin-creator workflow, then install `ha-development` from that marketplace.
+The Claude marketplace JSON is not a Codex marketplace JSON.
+
+`ha-development-roles` exposes the original development/review roles as portable references.
+Claude `agents/*.md` definitions and their `model: sonnet` settings are not registered as
+Codex agent types. Native Codex subagents use the host's configuration and require available,
+authorized delegation; reading a role reference does not spawn one.
+
+The Claude `.claude/settings.json` PostToolUse hook remains Claude-only. Codex must explicitly
+run the appropriate validation skill after relevant edits; hook parity is not claimed.
+No Home Assistant deployment or device action is part of plugin installation.
+
+Configure a personal HA connection using `ha-mcp-setup`; keep tokens in private user config,
+not this repository or a distributable plugin. Start a new Codex thread after installation.
+
+### Native Codex agents
+
+Export the maintained Claude roles to a target project's native Codex agent directory:
+
+```sh
+python3 scripts/export_codex_agents.py agents /path/to/project/.codex/agents --prefix ha_
+```
+
+This preserves role instructions, translates the task-planner reference, and removes
+Claude model/tool frontmatter. Agents inherit the selected Codex model. Rerun the exporter
+when role source files change. The repository includes generated `.codex/agents/` definitions
+for working on the plugin itself. Names use `ha_` plus the role name with underscores.
+The installed skill bundle still provides portable role references; native agent files are
+installed per project, not assumed to be loaded from Claude's `agents/` folder.

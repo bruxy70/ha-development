@@ -1,9 +1,6 @@
 ---
 name: ha-validate
-description: Validation gate for Home Assistant automation projects — the success criteria a change must meet before it is trusted. Use after editing HA automations/scripts/helpers (YAML) or AppDaemon apps (Python), when asked to "validate"/"check" an HA change, or when running one through a loop. Routes by artifact type: offline checks where possible, deploy-and-monitor where not.
-allowed_tools:
-  - Bash
-  - mcp__home-assistant
+description: 'Validation gate for Home Assistant automation projects — the success criteria a change must meet before it is trusted. Use after editing HA automations/scripts/helpers (YAML) or AppDaemon apps (Python), when asked to "validate"/"check" an HA change, or when running one through a loop. Routes by artifact type: offline checks where possible, deploy-and-monitor where not.'
 ---
 
 # Home Assistant validation gate

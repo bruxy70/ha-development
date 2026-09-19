@@ -1,9 +1,6 @@
 ---
 name: ha-troubleshooting
 description: Home Assistant troubleshooting and diagnostics. Use when the user reports a problem with Home Assistant — entities not working, automations not triggering, states lost on restart, integrations failing, UI not updating, or any HA misbehavior. Also use when discussing HA logs, restore_state, recorder, database health, or diagnostic workflows. This skill guides structured diagnosis using the HA MCP server to check live state and call services.
-allowed_tools:
-  - mcp__home-assistant
-  - Bash
 ---
 
 # Home Assistant Troubleshooting
@@ -49,7 +46,7 @@ Run these cheap checks (skip any you already know from context):
 | API reachable via REST? | `curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOKEN" http://<HA_IP>:8123/api/` returns `200` |
 | SSH available? | Advanced SSH & Web Terminal add-on installed, then a `paramiko` connect succeeds (Method 3). **Usually absent — never assume it; probe or ask.** |
 
-The long-lived token for MCP/REST is in the MCP config (`.claude.json` → `mcpServers.home-assistant.headers.Authorization`).
+Find credentials in the current client configuration: Codex uses `~/.codex/config.toml` → `mcp_servers.home-assistant` (configured bearer environment variable or `http_headers.Authorization`); Claude Code uses `~/.claude.json` → `mcpServers.home-assistant.headers.Authorization`. Read only the needed field in-process; never print credentials.
 
 If a probe is ambiguous, **ask the user** ("Is SSH into HA available?" / "Is /config mounted here?") rather than guessing — a wrong guess is exactly the random behaviour this step exists to prevent.
 
@@ -88,11 +85,11 @@ The API cannot read these — they need real file access.
 
 ## Access methods (reference detail)
 
-The three underlying access methods referenced by the hierarchy above. The long-lived access token used by methods 1 and 2 is in the MCP server configuration (`.claude.json` under `mcpServers.home-assistant.headers.Authorization`).
+The three underlying access methods referenced by the hierarchy above. Use the current client credential source described above. Do not depend on Claude configuration when working in Codex.
 
 ### Method 1: MCP Server
 
-Use the `mcp__home-assistant` tool to query entity states, call services, list entities, and get history. This is the simplest method — no extra setup needed if the MCP server is already configured.
+Discover the connected Home Assistant MCP tools and use supported operations for entity states or services. History and listing capabilities depend on the selected HA API; use REST where MCP does not expose them. This is the simplest method — no extra setup needed if the MCP server is already configured.
 
 ### Method 2: REST API
 
@@ -127,7 +124,7 @@ Note: `WebFetch` cannot reach local network IPs — always use `curl` via the Ba
 
 For OS-level diagnostics, connect to HA via SSH and use the `ha` CLI. **SSH is not available by default** — it requires the **Advanced SSH & Web Terminal** add-on (application) to be installed in Home Assistant. This is a fallback method; prefer MCP or the REST API when HA Core is responsive.
 
-**Why paramiko:** Native `ssh` requires key files and varies across platforms (Mac uses OpenSSH, Windows needs PuTTY or similar). Python's `paramiko` library works identically on all platforms, supports password authentication natively, and handles host-key prompts automatically — ideal for Claude Code.
+**Why paramiko:** Native `ssh` requires key files and varies across platforms (Mac uses OpenSSH, Windows needs PuTTY or similar). Python's `paramiko` library works identically on all platforms, supports password authentication natively, and handles host-key prompts automatically — usable from either client.
 
 **Prerequisites:**
 - **Advanced SSH & Web Terminal** add-on installed and running in HA

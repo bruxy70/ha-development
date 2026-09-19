@@ -1,7 +1,6 @@
 ---
 name: esphome-lvgl
 description: Complete reference for ESPHome-based HMI displays -- ESPHome framework fundamentals (project config, packages, hardware, HA integration, lambdas) and the LVGL graphics component (widgets, styles, layouts, design guidelines, patterns, troubleshooting).
-allowed-tools: WebFetch, Read, Grep
 ---
 
 # ESPHome HMI Display Reference
