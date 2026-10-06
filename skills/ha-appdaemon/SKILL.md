@@ -7,6 +7,30 @@ description: AppDaemon development for Home Assistant. Use when writing or modif
 
 This skill contains ONLY things that differ from generic Python/HA knowledge or are commonly done wrong. Standard AppDaemon docs apply for everything else.
 
+## Workflow and checklist
+
+First identify synchronous versus asynchronous context. Do not block app callbacks with `time.sleep`. Await APIs in async context and create background tasks with `self.create_task` for reload cleanup. Initialize from current inputs and validate reload behavior.
+
+1. Identify runtime version, sync/async context, existing lifecycle and authorized scope.
+2. Choose sync callbacks with scheduled work, or async callbacks with awaited APIs and managed tasks; preserve the matching callback signatures. On unresolved context return to step 1.
+3. Implement minimal lifecycle/state handling, including missing, unknown, unavailable and nonnumeric inputs. Keep project examples' entities, arguments and timing configurable.
+4. Run syntax/lint and meaningful pure-logic/mock lifecycle tests using [ha-validate](../ha-validate/SKILL.md). Check initialization, delayed callback signatures and reload task cleanup. On failure return to step 3 and recheck; stop repeated unchanged failure with a blocker. Mock tests cannot prove actual runtime reload cleanup.
+5. Report files, test evidence, runtime checks not run and deployment scope. Use an authorized hot-reload workflow; do not restart the whole service by default.
+
+- [ ] Confirm runtime, context, lifecycle and scope.
+- [ ] Preserve callbacks and managed-task contracts; return to scope if unclear.
+- [ ] Test state edges and reload cleanup; return to implementation on failure.
+- [ ] Report evidence and unavailable runtime checks.
+
+## Requirements and execution boundary
+
+Requires a supported AppDaemon installation connected to HA; follow [official provisioning](https://appdaemon.readthedocs.io/en/latest/INSTALL.html). Python offline tools are listed in [validation](../ha-validate/SKILL.md); configure HA access using [connection setup](../ha-mcp-setup/SKILL.md). These references support both Claude Code and Codex marketplace consumers; resolve links relative to the loaded skill, independently of the working directory.
+
+Examples are adaptable fragments, not complete configurations. Preserve required schema/API, nesting and semantic guards; replace entities, inputs, timing and targets with project values. Loading this skill does not authorize live actions, reloads, restarts or deployment. Use only the live target/actions already authorized by the user; otherwise report offline results and obtain explicit scope before live changes.
+
+[Cross-client enforcement proposals](../ha-validate/reference/enforcement.md) describe candidate hook events and their limits; no hook is activated by reading this skill. [Three evaluation prompts and results](reference/evaluations.md) track model/client evidence.
+
+
 ## 1. App Lifecycle
 
 **`initialize()` is SYNCHRONOUS — blocking it freezes ALL of AppDaemon.**

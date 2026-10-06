@@ -1,15 +1,36 @@
 ---
 name: ha-mcp-setup
-description: Connect Codex or Claude Code to Home Assistant through its MCP server, configure authentication, and diagnose MCP connectivity.
+description: Connects Codex or Claude Code to Home Assistant's MCP server, configures authentication, and diagnoses connectivity. Use when setting up or repairing a Home Assistant MCP connection in either client.
 ---
 
 # Home Assistant MCP setup
 
 Home Assistant exposes Streamable HTTP at `/api/mcp`. Configure **Model Context Protocol Server** under Settings → Devices & services → Add integration (not the MCP client integration). Its selected LLM API and exposed entities determine the available tools; discover tools rather than assuming history, unrestricted entity search, or configuration editing exists.
 
+## Requirements and workflow
+
+Use an installed supported client: follow [Codex installation](https://developers.openai.com/codex/quickstart/) or [Claude Code installation](https://code.claude.com/docs/en/setup), selecting its current platform-supported install method. Existing HA needs the Model Context Protocol Server integration, reachable URL and supported bearer/OAuth access. Host text/configuration tools and network access are sufficient; no Python package is required. Preserve credentials in private configuration and never print them or commit them. Resolve skill resources relative to their loaded path in either marketplace client.
+
+1. Confirm client/version, personal versus project scope, endpoint and authentication method.
+2. Preserve unrelated configuration and configure the matching client format below. If credentials or method are unknown, return to step 1 before writing.
+3. Start a new session and separate registration from live initialize/tool discovery. Check advertised read-only lookup if available; do not assume tool names. If connection fails, use the matching symptom below, repair one evidenced cause and repeat step 3.
+4. Stop repeated unchanged failure, report the blocker and distinguish configured, registered and live-verified states. Device-changing services remain outside setup authorization.
+
+- [ ] Confirm client, scope, endpoint and authentication.
+- [ ] Preserve private credentials and unrelated configuration; return to scope if unknown.
+- [ ] Check registration and live discovery separately; repair/recheck on failure.
+- [ ] Report available tools, checks and outstanding verification.
+
+[Cross-client enforcement proposals](../ha-validate/reference/enforcement.md) describe optional hook events and explicit fallback checks; no hook activates here. [Three evaluation prompts/results](reference/evaluations.md) record client/model testing.
+
 ## Codex
 
 Use `~/.codex/config.toml` for a personal connection. A trusted project's `.codex/config.toml` can scope a connection to that project, but never commit tokens.
+
+TOML table/key shape is strict for the supported Codex version; server name, HA URL, token environment-variable name and timeout are configurable. Select supported OAuth or bearer authentication instead of mixing configuration formats. Preserve unrelated configuration.
+
+Input: personal Codex connection, token already available as `HA_TOKEN`.
+Output: private user-config table below; report registration versus live verification separately.
 
 ```toml
 [mcp_servers.home-assistant]

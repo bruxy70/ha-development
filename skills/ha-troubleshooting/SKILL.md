@@ -5,168 +5,47 @@ description: Home Assistant troubleshooting and diagnostics. Use when the user r
 
 # Home Assistant Troubleshooting
 
-You are a Home Assistant troubleshooting specialist. When a user reports a problem, follow this structured diagnostic approach. Avoid jumping to obvious explanations — verify each hypothesis with evidence before acting.
+Start with read-only/offline checks. Editing or compiling does not authorize deployment, firmware writes, device-changing service calls or restarts. Reuse authorization already given for this action. Before a live mutation, confirm the target, intended effect, validation and rollback. If authorization/access is absent, report the outstanding live check. Treat `.storage` as read-only diagnostic input; do not edit it to repair a symptom.
+
+First identify the execution context and available access using [context detection and artifact access](reference/access.md). Resolve all resources relative to this loaded skill; neither Claude Code nor Codex consumers need this repository as their working directory. Read [failure patterns/version notes](reference/failure-patterns.md) only for the affected symptom. [Connection setup](../ha-mcp-setup/SKILL.md), [validation](../ha-validate/SKILL.md), [cross-client enforcement proposals](../ha-validate/reference/enforcement.md) and [evaluation records](reference/evaluations.md) are direct companion resources.
+
+## Requirements and completion loop
+
+Use host text/filesystem tools, an existing configured HA MCP/REST connection and a network-capable client. HA CLI requires an existing supported on-host runtime; do not assume it exists on a development computer. Optional SSH requires trusted host keys and a configured SSH server; optional Python alternative installs with `python -m pip install paramiko` in the project environment. SQLite/JSON diagnostics use Python standard-library modules. No package installation is needed for native SSH or ordinary read-only text inspection.
+
+Examples are adaptable diagnostic fragments: substitute confirmed paths, backend, host and entity IDs; preserve read-only database mode, verified SSH trust and live authorization guards. A missing tool/access path is a verification limit, not a passed check.
+
+1. Identify reproducible symptom, changed versions/configuration and authorized scope; detect context before access.
+2. Read relevant available state, traces/logs and files via the matching access tier. If evidence is unavailable, return to context/access or report the gap.
+3. Test one falsifiable hypothesis at a time using read-only checks; record observed evidence separately from inferred causes. Return to step 2 if evidence contradicts it.
+4. Apply the scoped authorized root-cause fix; run [ha-validate](../ha-validate/SKILL.md) and reproduce the symptom within permitted scope. On failure return to step 3, repair and recheck; stop a repeated unchanged failure and report the blocker.
+5. Restore only investigation diagnostics, preserve operational logging, and report checks, outstanding live verification and rollback.
+
+- [ ] Confirm context, symptom, version and scope.
+- [ ] Gather available evidence; return to access detection for gaps.
+- [ ] Test the hypothesis; return to evidence on contradiction.
+- [ ] Validate the authorized fix; return to hypothesis on failure.
+- [ ] Remove temporary diagnostics and report verification limits.
+
+Diagnose Home Assistant failures using the artifact-specific access hierarchy and evidence below.
 
 ## Core Principles
 
-### Investigation stance
-
-1. **Verify, don't assume.** Treat the user's theory — and the obvious explanation — as hypotheses, not facts. Read the actual state of files, databases, timestamps, and configurations before drawing conclusions. "It worked until yesterday" is a clue; confirm what changed yesterday rather than acting on the claim alone.
-
-2. **Logs are the source of truth.** Always check actual error logs before theorizing. The real cause is often a single error buried in the log that silently blocks an entire subsystem. The user's own attempted fixes (switched databases, disabled integrations, changed intervals) may mask the original cause — the log still shows it even when the current config does not.
-
-3. **When evidence is missing, gather it — or say so.** If the information needed to identify the root cause isn't available, say "I don't know" explicitly rather than inferring a cause from general knowledge. HA evolves fast — LLM training data is often stale on breaking changes. Close the gap: read current HA documentation, search for reports of similar issues, or propose a targeted test to produce the missing evidence.
+Use a reproducible symptom, changed-version/configuration evidence and one falsifiable hypothesis at a time. Record observed evidence separately from inferred causes. Read relevant available logs early; combine state, traces, version and timestamps. Missing logs do not prove a cause.
 
 ### How HA fails
 
-4. **One bad component can break unrelated subsystems.** HA subsystems share infrastructure (event bus, state machine, storage, recorder), and many writes are all-or-nothing. A single misbehaving entity, template, or integration can block persistence for everything else. Look for the single point of failure — the error log names it.
+1. **Shared infrastructure can spread failures.** Storage serialization or shared recorder errors may affect unrelated entities. Confirm affected scope from installed-version logs rather than assuming every persistence mechanism failed.
 
-5. **Custom integrations are the usual suspects.** They don't go through core-integration QA. Check `custom_components/` errors first when the cause is unclear.
+2. Include custom integrations among suspects only when errors or recent changes implicate them.
 
 ### Diagnostic methodology
 
-6. **Check the actuator layer first.** For "X is happening but shouldn't be" (or vice versa), check whether commands are actually reaching their target and whether data is actually being written, before analyzing the decision logic that produces those commands.
+1. **Check the actuator layer first.** For "X is happening but shouldn't be" (or vice versa), check whether commands are actually reaching their target and whether data is actually being written, before analyzing the decision logic that produces those commands.
 
-7. **Check timestamps and freshness.** File modification times, database row counts, and `last_updated` attributes tell you whether a subsystem is actively working or silently stuck.
+2. **Check timestamps and freshness.** File modification times, database row counts, and `last_updated` attributes tell you whether a subsystem is actively working or silently stuck.
 
-8. **Trace the data through the full pipeline.** Follow the value, not the code: where does it come from, where is it stored, what reads it back, at which step does it fail? Don't just check start and end — data flows through multiple layers (template → state machine → recorder → database → restore_state → startup) and the break can be at any one of them.
-
-## Step 0: Detect your execution context (do this FIRST)
-
-Before fetching any log, state, or file, determine **where this session runs** and **what access it has**. The best tool for each task depends entirely on this — it is the difference between reading AppDaemon logs in one second off a mounted volume and needlessly asking the user to paste them, or blindly running `ha …` as if on the HA shell while actually on a dev machine. Probe **once**, at the start; the answer holds for the whole session. State your conclusion out loud, then route every later access through the hierarchy below.
-
-Run these cheap checks (skip any you already know from context):
-
-| Question | Probe |
-|---|---|
-| On the HA host / an SSH terminal into it? | `command -v ha` succeeds **and** `/config` is a real local dir (not a network mount) |
-| Inside a container (Core / add-on)? | `/.dockerenv` exists, or `/proc/1/cgroup` mentions `docker` |
-| HA volume mounted on a dev machine? | try the OS default(s) first, don't just ask: **macOS** → `ls /Volumes/config` (the standard Samba/AFP mount point when the share is named "config"); **Windows** → `\\HA\config` or a mapped drive letter; **Linux** → check common bind-mount points (`/mnt/config`, `~/ha-config`) or `findmnt \| grep config`. Only ask the user for their mount path if none of these exist. AppDaemon logs then live at `<mount>/appdaemon/logs/*.log` |
-| API reachable via MCP? | the `mcp__home-assistant` tool is present in this session |
-| API reachable via REST? | `curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOKEN" http://<HA_IP>:8123/api/` returns `200` |
-| SSH available? | Advanced SSH & Web Terminal add-on installed, then a `paramiko` connect succeeds (Method 3). **Usually absent — never assume it; probe or ask.** |
-
-Find credentials in the current client configuration: Codex uses `~/.codex/config.toml` → `mcp_servers.home-assistant` (configured bearer environment variable or `http_headers.Authorization`); Claude Code uses `~/.claude.json` → `mcpServers.home-assistant.headers.Authorization`. Read only the needed field in-process; never print credentials.
-
-If a probe is ambiguous, **ask the user** ("Is SSH into HA available?" / "Is /config mounted here?") rather than guessing — a wrong guess is exactly the random behaviour this step exists to prevent.
-
-## Access hierarchy — route by WHAT you are fetching
-
-Once context is known, pick the **highest available tier** for each task. The ordering differs per artifact — a single global "prefer MCP" or "prefer the mount" rule is wrong (e.g. AppDaemon logs favour the mount; the Core log is not on the mount at all).
-
-### AppDaemon logs — and any file under `/config` (packages, `secrets.yaml`, `www/`, `.storage`)
-1. **Mounted volume / on-host** → read the file directly: `<mount>/appdaemon/logs/appdaemon.log` (+ rotated `.log.1`, `.log.2` for history). Fastest, complete. **Whenever a volume is mounted, do this — do NOT hit the API or ask the user.**
-2. **SSH** → `tail`/`cat` the file on the host.
-3. **REST API** → `/api/hassio/addons/a0d7b954_appdaemon/logs` (current session only, no rotation).
-4. **Ask** the user to paste the relevant lines.
-
-### HA Core log
-On HA OS 2025.11+ this is **no longer written to `/config`** — a mounted volume does **not** contain it. Do not look for `/config/home-assistant.log`.
-1. **REST API** → `curl .../api/hassio/core/logs?lines=100` (needs Core running).
-2. **SSH** → `ha core logs` (works even when Core is down/hung).
-3. **Ask** the user to paste.
-
-### Live entity state / attributes / history / service calls
-1. **MCP** (`mcp__home-assistant`) → states, services, history.
-2. **REST API** → `/api/states`, `/api/states/<id>`, `/api/template`, `/api/history/period/…`.
-3. **On-host / SSH** → `ha` CLI + Developer Tools.
-4. **Ask** for a Developer Tools → States value/screenshot.
-
-### `.storage` files & recorder DB (`core.restore_state`, `home-assistant_v2.db`)
-The API cannot read these — they need real file access.
-1. **Mounted volume / on-host / SSH** → read `<config>/.storage/…` and open the SQLite DB directly (see Step 3).
-2. **Ask** — no file access means requesting the specific file or a targeted query result.
-
-### `ha` CLI / OS-level ops (config check, restart, host stats)
-1. **On-host** → run `ha …` directly.
-2. **SSH** → run `ha …` remotely (Method 3).
-3. **REST API** → limited equivalents only, e.g. `/api/config/core/check_config`.
-4. Otherwise unavailable — say so rather than pretending to run it.
-
-## Access methods (reference detail)
-
-The three underlying access methods referenced by the hierarchy above. Use the current client credential source described above. Do not depend on Claude configuration when working in Codex.
-
-### Method 1: MCP Server
-
-Discover the connected Home Assistant MCP tools and use supported operations for entity states or services. History and listing capabilities depend on the selected HA API; use REST where MCP does not expose them. This is the simplest method — no extra setup needed if the MCP server is already configured.
-
-### Method 2: REST API
-
-Use `curl` via the Bash tool with the long-lived access token. Useful for endpoints not exposed through MCP (logs, config validation, template rendering).
-
-**Key diagnostic endpoints:**
-
-| Endpoint | Method | Use |
-|---|---|---|
-| `/api/config` | GET | HA version, loaded components, location, unit system |
-| `/api/states` | GET | All entity states — find unavailable/unknown entities |
-| `/api/states/<entity_id>` | GET | Single entity state + attributes |
-| `/api/error_log` | GET | Error log as plaintext (current session) |
-| `/api/hassio/core/logs` | GET | Core logs via Supervisor API (HA OS 2025.11+) |
-| `/api/hassio/supervisor/logs` | GET | Supervisor logs |
-| `/api/hassio/addons/{slug}/logs` | GET | Add-on logs (e.g., `a0d7b954_appdaemon`) |
-| `/api/config/core/check_config` | POST | Validate configuration remotely |
-| `/api/template` | POST | Render a Jinja2 template (test templates) |
-| `/api/history/period/<timestamp>` | GET | Historical states for entities |
-| `/api/logbook/<timestamp>` | GET | Logbook entries |
-
-```bash
-# Example: fetch last 100 lines of HA core log
-curl -s -H "Authorization: Bearer $TOKEN" \
-  "http://<HA_IP>:8123/api/hassio/core/logs?lines=100" \
-  | sed 's/\x1b\[[0-9;]*m//g'
-```
-
-Note: `WebFetch` cannot reach local network IPs — always use `curl` via the Bash tool.
-
-### Method 3: SSH + HA CLI via paramiko (deep access)
-
-For OS-level diagnostics, connect to HA via SSH and use the `ha` CLI. **SSH is not available by default** — it requires the **Advanced SSH & Web Terminal** add-on (application) to be installed in Home Assistant. This is a fallback method; prefer MCP or the REST API when HA Core is responsive.
-
-**Why paramiko:** Native `ssh` requires key files and varies across platforms (Mac uses OpenSSH, Windows needs PuTTY or similar). Python's `paramiko` library works identically on all platforms, supports password authentication natively, and handles host-key prompts automatically — usable from either client.
-
-**Prerequisites:**
-- **Advanced SSH & Web Terminal** add-on installed and running in HA
-- SSH username and password configured in the add-on settings
-- Note the SSH port (default: `22`, often changed to `22222` to avoid conflicts)
-- `paramiko` installed: `pip install paramiko`
-
-**Connecting and running commands:**
-
-```python
-import paramiko
-
-client = paramiko.SSHClient()
-client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-client.connect('<HA_IP>', port=22222, username='<USERNAME>', password='<PASSWORD>')
-
-stdin, stdout, stderr = client.exec_command('ha core logs')
-print(stdout.read().decode())
-client.close()
-```
-
-**Useful HA CLI commands via SSH:**
-
-| Command | Use |
-|---|---|
-| `ha core info` | Core version, state, startup time |
-| `ha core logs` | Full Core log output |
-| `ha core check` | Validate configuration |
-| `ha core stats` | CPU, memory, network usage |
-| `ha core restart` | Restart HA Core |
-| `ha supervisor info` | Supervisor version and state |
-| `ha supervisor logs` | Supervisor logs |
-| `ha host info` | Host OS info, disk usage |
-| `ha addons info <slug>` | Add-on state and config |
-| `ha addons logs <slug>` | Add-on logs |
-
-**When to use SSH over API:**
-- **When HA Core is down.** SSH connects to the OS/Supervisor level, not to HA Core. MCP and the REST API both run inside HA Core — if Core is crashed, hung, or stopped, they are unavailable. SSH remains operational because the add-on runs under the Supervisor independently of Core.
-- To restart or stop HA Core (`ha core restart`, `ha core stop`, `ha core start`)
-- To reboot or shut down the host (`ha host reboot`, `ha host shutdown`)
-- For `ha core check` (config validation with richer output than the API)
-- For `ha core stats` / `ha host info` (system resource diagnostics)
+3. **Trace the data through the full pipeline.** Follow the value, not the code: where does it come from, where is it stored, what reads it back, at which step does it fail? Don't just check start and end — data flows through multiple layers (template → state machine → recorder → database → restore_state → startup) and the break can be at any one of them.
 
 ## Diagnostic Workflow
 
@@ -180,19 +59,19 @@ client.close()
 
 ### Step 2: Check the error log EARLY
 
-Don't spend time guessing — the log usually contains the answer.
+Read available logs for the affected subsystem and match timestamps to the symptom.
 
-**Fetch the log via the hierarchy in "Access hierarchy" above** — the tier depends on context and on *which* log:
+**Fetch the log via the [artifact access hierarchy](reference/access.md#access-hierarchy--route-by-what-you-are-fetching)** — the tier depends on context and on *which* log:
 - **AppDaemon / any `/config` file**: read directly off the mounted volume or host when available; that's the top tier, not the API.
 - **HA Core log**: not on the mount (2025.11+) — REST `/api/hassio/core/logs?lines=100`, or `ha core logs` over SSH when Core is down.
 
-`WebFetch` cannot reach local-network IPs — always use `curl` via the Bash tool for REST.
+Use a network-capable tool available in the current host; for local LAN REST, curl is a fallback when browser fetching cannot reach it.
 
 **What to look for in logs:**
-- Errors from `homeassistant.helpers.storage` — storage write failures affect ALL state persistence
+- Errors from `homeassistant.helpers.storage` — storage write failures may affect the implicated restore/storage subsystem; verify actual scope
 - Errors from `homeassistant.components.recorder` — database issues
 - Errors from `homeassistant.helpers.entity` — individual entity update failures
-- Stack traces from `custom_components` — custom integrations are the most common source of unexpected errors
+- Stack traces from `custom_components` — investigate only when the traceback or recent change implicates that component
 - Repeated errors on a cycle (every 30s, every minute) — indicates a persistent problem, not transient
 
 **Filter for the relevant subsystem:**
@@ -218,16 +97,17 @@ Use the HA MCP server to verify that the running system matches expectations:
 - Query entity states and attributes
 - Check entity availability
 - Verify automation/script states (enabled/disabled)
-- Call services to test if they work
+- Inspect service schema and traces first; exercise a changing service only within the authorization boundary above.
 
 **File-level checks (when shell/mount access is available):**
+The `/config` paths below apply only to a confirmed on-host/container configuration. On a development mount, substitute its confirmed config root.
 
-Note: On HA OS 2025.11+, `/config/home-assistant.log` no longer exists. Use the Supervisor API from Step 2 instead.
+On applicable HA OS releases Core logs are journal/API-backed; verify installed version and installation type. A mounted config may lack Core logs even while they are available through Supervisor. Use the matching access tier.
 
 ```bash
 # Is restore_state being actively updated?
 ls -la /config/.storage/core.restore_state
-# A stale timestamp means the write process is broken
+# Compare timestamp with installed-version write cadence and logs; staleness alone does not prove failure
 
 # Check .storage file integrity
 for f in core.restore_state core.entity_registry core.device_registry core.config_entries; do
@@ -236,19 +116,26 @@ for f in core.restore_state core.entity_registry core.device_registry core.confi
 done
 ```
 
-**Check database health (SQLite):**
+**Check database health (SQLite):** ([read-only URI documentation](https://docs.python.org/3/library/sqlite3.html#how-to-work-with-sqlite-uris))
+Confirm the actual recorder backend/path. Run expensive integrity checks on a consistent SQLite backup for large live databases; do not copy only an active database while omitting WAL state. The example requires a previously confirmed `config_dir`; close the connection in a `finally` block if adapting this into fallible application code.
 ```python
 import sqlite3, time
-conn = sqlite3.connect('/config/home-assistant_v2.db')
-print('Integrity:', conn.execute('PRAGMA integrity_check').fetchone()[0])
-for table in ['states', 'states_meta', 'events', 'statistics']:
-    count = conn.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
-    print(f'{table}: {count:,}')
-recent = conn.execute(
-    'SELECT COUNT(*) FROM states WHERE last_updated_ts > ?',
-    (time.time() - 3600,)
-).fetchone()[0]
-print(f'States in last hour: {recent:,}')
+from pathlib import Path
+config_dir = Path(config_dir).resolve()  # previously confirmed configuration directory
+conn = sqlite3.connect((config_dir / 'home-assistant_v2.db').as_uri() + '?mode=ro', uri=True)
+conn.execute('PRAGMA query_only = ON')
+try:
+    print('Integrity:', conn.execute('PRAGMA integrity_check').fetchone()[0])
+    for table in ['states', 'states_meta', 'events', 'statistics']:
+        count = conn.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
+        print(f'{table}: {count:,}')
+    recent = conn.execute(
+        'SELECT COUNT(*) FROM states WHERE last_updated_ts > ?',
+        (time.time() - 3600,)
+    ).fetchone()[0]
+    print(f'States in last hour: {recent:,}')
+finally:
+    conn.close()
 ```
 
 ### Step 4: Form and test hypotheses
@@ -263,107 +150,10 @@ After gathering evidence, form a specific hypothesis and test it:
 **If you need to instrument or run probe tests to gather evidence:**
 
 - Each debug log line or probe test must have a defined purpose tied to a specific hypothesis. Excessive "just in case" logging hurts performance and drowns out the operational signal the logs are supposed to carry.
-- Ask before adding them.
+- Confirm diagnostic changes are within the already authorized scope; otherwise obtain that scope before adding them.
 - After the test, restore the original configuration and remove debug logs — don't leave diagnostic scaffolding in the code.
 
 ### Step 5: Fix the root cause, not the symptom
 
-When you find the issue, fix the actual source. Don't work around it — workarounds create future problems.
-
-**Before applying the fix:** summarize what you're changing and why, then ask for confirmation. Don't auto-apply a change the moment you believe you've found the cause. Document the change so it can be rolled back.
-
-## Common Failure Patterns
-
-### Pattern: "Everything lost on restart"
-
-**Scope**: All or most entities lose state after restart.
-
-**Diagnostic path**:
-1. Check `core.restore_state` file timestamp — is it being updated every ~15 minutes?
-2. If stale: check HA log for `homeassistant.helpers.storage` errors writing `core.restore_state`
-3. Common cause: a single entity producing a value that fails JSON serialization (oversized integer, NaN, circular reference) blocks ALL restore_state writes
-4. The error message names the exact entity and value — fix that entity
-
-**Key insight**: HA's restore_state write is all-or-nothing. One bad entity out of thousands blocks persistence for everything.
-
-### Pattern: "Specific helpers reset on restart"
-
-**Scope**: Some helpers reset, others don't.
-
-**Diagnostic path**:
-1. Check if YAML-defined helpers have `initial:` set — this ALWAYS overrides restored state by design
-2. Check if the helper's domain is in the recorder's `include` list
-3. Check if the helper is in an `exclude` list
-4. Check UI-created helpers in `.storage/input_number` etc. for `initial` values
-
-### Pattern: "Automation doesn't trigger / triggers incorrectly"
-
-**Diagnostic path**:
-1. Check automation traces (HA UI → Automations → the automation → Traces)
-2. Check if the automation is enabled (state = "on")
-3. Verify the trigger entity actually changes state (check logbook)
-4. Check conditions — template conditions may silently evaluate to false
-5. Check if house mode or other global conditions are blocking it
-6. For device triggers: verify `device_id` still matches (can break after re-pairing)
-
-### Pattern: "Entity shows wrong value / unavailable"
-
-**Diagnostic path**:
-1. Check the integration providing the entity — is it connected?
-2. Check HA log for errors from that integration
-3. For template sensors: test the template in Developer Tools → Templates
-4. For MQTT entities: check Zigbee2MQTT / broker connectivity
-5. For ESPHome: check device logs via ESPHome dashboard
-
-### Pattern: "Service call does nothing"
-
-**Diagnostic path**:
-1. Test the service call in Developer Tools → Services
-2. Check if the target entity is available
-3. For climate services: values must be in 0.5°C increments (others silently ignored)
-4. For `shell_command`: requires full HA restart after changes, cannot receive service data parameters
-5. Check HA log for errors during the service call
-
-### Pattern: "Integration won't load / setup failed"
-
-**Diagnostic path**:
-1. Check HA log for setup errors from the integration
-2. Verify credentials in `secrets.yaml` or config entries
-3. Check network connectivity to external services
-4. For custom components: check compatibility with current HA version
-5. Check `.storage/core.config_entries` for the integration's config
-
-### Pattern: "Dashboard / UI not updating"
-
-**Diagnostic path**:
-1. Hard-refresh browser (Ctrl+Shift+R)
-2. Check if the entity state updates in Developer Tools → States
-3. If entity updates but UI doesn't: check the dashboard card configuration
-4. For custom cards: check browser console for JavaScript errors
-5. For Lovelace YAML: check for syntax errors
-
-## HA-Specific Technical Knowledge
-
-### Template engine quirks
-- `_parse_result()` auto-converts all-digit strings to integers — a string like `"111100001111"` becomes a massive int
-- The `| string` Jinja2 filter does NOT prevent this — `_parse_result()` runs after Jinja2 rendering
-- To force string output: include at least one non-digit character in the result
-- Template sensors with `state: "{{ expression }}"` may silently fail if the expression returns None
-
-### Recorder and restore_state
-- `core.restore_state` is written periodically (~15 min) AND on clean shutdown
-- An unclean shutdown (crash, power loss) loses state changes since last periodic write
-- The recorder `include`/`exclude` filters affect which entities are tracked and restored
-- `commit_interval` affects database write frequency, not restore_state writes
-
-### YAML and packages
-- ALL `.yaml` files in the `packages/` directory are loaded — use `.SOURCE`, `.BACKUP`, or `.disabled` extensions to prevent loading
-- `shell_command` entities require a full HA restart (not reloadable via YAML reload)
-- AppDaemon apps and HA packages are separate systems — changes to one don't require restarting the other
-
-### Common entity quirks
-- TRVs typically don't have `current_temperature` — use separate room sensors
-- `climate.set_temperature` only accepts 0.5°C increments (invalid values silently ignored)
-- Device IDs can change after re-pairing, breaking device triggers in automations
-- Entity IDs can change if a device is re-added, breaking automations and templates
+Apply the authorized root-cause fix, retaining a scoped rollback copy; validate using the completion loop. Reuse authorization already given; unresolved scope requires clarification before mutation.
 

@@ -7,6 +7,30 @@ description: Home Assistant automations, scripts, and blueprints development. Us
 
 This skill contains ONLY things that differ from generic knowledge or are commonly done wrong. If something isn't mentioned here, standard HA docs apply.
 
+## Workflow and checklist
+
+Verify the installed HA version and documented keys before emission; preserve behavior when converting. If support or equivalence is uncertain, keep the generic form.
+
+1. Identify artifact, installed version, intended behavior and authorized scope.
+2. Verify keys, device classes, input defaults, transition/attribute semantics and downtime policy against target-version docs. On uncertainty, return to step 1 or keep a documented generic form.
+3. Draft the minimal change using the matching automation/script/blueprint branch below.
+4. Run [ha-validate](../ha-validate/SKILL.md), including edge fixtures. For timers check expiry, cancellation, restart while active and expiry while down. A syntax check alone does not prove those behaviors. On failure, return to step 3 and recheck; after a repeated unchanged failure, report the blocker instead of looping.
+5. Report files, observed checks, untested live behavior and remaining limitations.
+
+- [ ] Confirm target version, behavior and scope.
+- [ ] Verify keys and input/transition guards; return to scope on uncertainty.
+- [ ] Draft and validate; return to draft on failure.
+- [ ] Record checks, limitations and deployment authorization separately.
+
+## Requirements and execution boundary
+
+Uses host filesystem text tools and browser/web-fetch access to current HA docs; no package install is needed for lookup. Rendering/semantic checks require configured supported HA access using [connection setup](../ha-mcp-setup/SKILL.md); check tools use [validation](../ha-validate/SKILL.md). These references support both Claude Code and Codex marketplace consumers; resolve links relative to the loaded skill, independently of the working directory.
+
+Examples are adaptable fragments, not complete configurations. Preserve required schema/API, nesting and semantic guards; replace entities, inputs, timing and targets with project values. Loading this skill does not authorize live actions, reloads, restarts or deployment. Use only the live target/actions already authorized by the user; otherwise report offline results and obtain explicit scope before live changes.
+
+[Cross-client enforcement proposals](../ha-validate/reference/enforcement.md) describe candidate hook events and their limits; no hook is activated by reading this skill. [Three evaluation prompts and results](reference/evaluations.md) track model/client evidence.
+
+
 ## 1. Modern Syntax (2024+)
 
 **Top-level keys are PLURAL:**
@@ -54,129 +78,9 @@ to: "error"
 
 **`not_from`/`not_to`** exist but CANNOT be combined with `from`/`to` respectively.
 
-## 3. Purpose-Specific Triggers & Conditions (DEFAULT since 2026.7)
+## 3. Purpose-specific routing
 
-**Status:** Introduced in 2025.12 under **Settings → System → Labs**, these **graduated out of Labs and became the new default** in the 2026.7 release. They are now the **recommended** way to build triggers and conditions — no toggle required. The generic `state`/`numeric_state` syntax still works and remains correct for advanced/edge cases, but prefer purpose-specific building blocks for new work.
-
-**What it is:** Purpose-specific building blocks that describe the *intent* ("light turned on", "battery low", "temperature crossed threshold") instead of HA internals (which entity, which raw state, `on`/`detected`/`home`). Format is `domain.trigger_key` / `domain.condition_key`. They handle `unknown`/`unavailable` themselves — you do NOT add logic to ignore those states.
-
-**When reviewing automations:** `trigger: light.turned_on`, `condition: battery.is_low`, `trigger: motion.detected` etc. are valid — do NOT flag as errors.
-
-**Basic example — generic vs purpose-specific:**
-```yaml
-# GENERIC (still valid):
-triggers:
-  - trigger: state
-    entity_id: light.living_room
-    to: "on"
-conditions:
-  - condition: state
-    entity_id: light.living_room
-    state: "on"
-
-# PURPOSE-SPECIFIC (preferred):
-triggers:
-  - trigger: light.turned_on
-    target:
-      entity_id: light.living_room
-conditions:
-  - condition: light.is_on
-    target:
-      entity_id: light.living_room
-```
-
-**`target:` is required** and describes *what to watch* — entity, device, area, floor, or label. HA watches every matching entity of that domain behind the target. Combine target types freely.
-```yaml
-triggers:
-  - trigger: light.turned_on
-    target:
-      area_id: living_room      # any light in the area
-      label_id: outdoor         # + any light with this label (types combine)
-      # also: entity_id, device_id, floor_id
-```
-The action side takes a `target:` too, so an automation reads as intent, not a fragile entity list: *"when motion is detected in the outside area, turn on the outside lights."* Swap sensors/lights in that area later and the automation follows.
-
-**⚠️ `behavior` and `threshold` live under an `options:` block — NOT at the top level:**
-```yaml
-triggers:
-  - trigger: light.turned_on
-    target:
-      area_id: living_room
-    options:
-      behavior: first   # under options:, NOT a sibling of target:
-```
-
-**`behavior` — multi-target matching (values differ between triggers and conditions):**
-- **Triggers:** `each` (default — fire on every matching entity), `first` (only when the first of the group enters the state), `all` (only after every targeted entity has).
-- **Conditions:** `any` (default — pass if at least one matches), `all` (pass only if every targeted entity matches).
-```yaml
-conditions:
-  - condition: light.is_on
-    target:
-      area_id: living_room
-    options:
-      behavior: all     # true only if ALL lights in the area are on
-```
-
-**Threshold triggers** — numeric crossings, also under `options:`:
-```yaml
-triggers:
-  - trigger: temperature.crossed_threshold
-    target:
-      area_id: bedroom
-    options:
-      threshold:
-        type: below            # above | below | between | outside
-        value:                 # single value for above/below
-          number: 18
-          unit_of_measurement: "°C"   # REQUIRED with `number:`
-      behavior: each
-      for: "00:00:30"          # optional; also under options:
-```
-- `type: above`/`below` use `value:`; `type: between`/`outside` use `value_min:` and `value_max:`.
-- Each value is either `number:` (literal — then `unit_of_measurement:` is required) **or** `entity:` (an `input_number`/`number`/`sensor` — unit taken from the entity), letting you compare against a dynamic setpoint.
-- `above`/`below`/`between` are exclusive (equal to bound ≠ crossed); `outside` is inclusive.
-
-**Device-class ("purpose") domains — the big win:** Many building blocks are NOT real entity domains but map by device class across whatever entity reports it. `temperature.crossed_threshold` watches any sensor with the temperature device class; `battery.became_low` watches `binary_sensor` battery-class entities; `motion.detected` watches motion `binary_sensor`s. You target a room, not a sensor model.
-- `temperature.*`, `humidity.*`, `illuminance.*`, `power.*`, `air_quality.*` (CO₂, PM2.5, VOC, smoke…) — `.changed`, `.crossed_threshold`, and conditions `.is_value`.
-- `motion.*`, `occupancy.*`, `moisture.*`, `illuminance.*` — `.detected` / `.cleared` triggers, `.is_detected` / `.is_not_detected` conditions.
-- `battery.*` — triggers `became_low`, `no_longer_low`, `level_crossed`, `level_changed`, `started_charging`, `stopped_charging`; conditions `is_low`, `is_not_low`, `is_level`, `is_charging`, `is_not_charging`.
-
-**Common keys by domain** (representative, not exhaustive — ~189 triggers / ~144 conditions and growing; integrations can add their own):
-
-| Domain | Triggers | Conditions |
-|---|---|---|
-| `light` | `turned_on`, `turned_off`, `brightness_changed`, `brightness_crossed_threshold` | `is_on`, `is_off`, `is_brightness` |
-| `switch`/`fan`/`siren`/`remote` | `turned_on`, `turned_off` | `is_on`, `is_off` |
-| `climate` | `turned_on`, `turned_off`, `started_heating`, `started_cooling`, `started_drying`, `hvac_mode_changed`, `target_temperature_crossed_threshold`, `target_humidity_crossed_threshold` | `is_heating`, `is_cooling`, `is_drying`, `is_on`, `is_off`, `is_hvac_mode`, `is_target_temperature` |
-| `cover` (per type) | `blind_opened`/`blind_closed`, `curtain_opened`/`closed`, `shutter_opened`/`closed`, `shade_*`, `awning_*` | `blind_is_open`/`blind_is_closed`, `curtain_is_open`, `shutter_is_closed`, … |
-| `door`/`window`/`garage_door`/`gate`/`valve` | `opened`, `closed` | `is_open`, `is_closed` |
-| `lock` | `locked`, `unlocked`, `opened`, `jammed` | `is_locked`, `is_unlocked`, `is_open`, `is_jammed` |
-| `alarm_control_panel` | `armed`, `armed_away`, `armed_home`, `armed_night`, `armed_vacation`, `disarmed`, `triggered` | `is_armed`, `is_armed_away`, `is_disarmed`, `is_triggered`, … |
-| `battery` | `became_low`, `no_longer_low`, `level_crossed`, `started_charging`, `stopped_charging` | `is_low`, `is_not_low`, `is_level`, `is_charging` |
-| `update` | `became_available` | `is_available`, `is_not_available` |
-| `zone` | `entered`, `left`, `occupancy_detected`, `occupancy_cleared` | `in_zone`, `not_in_zone`, `occupancy_is_detected` |
-| `sun` | `sunrise`, `sunset`, `dawn`, `dusk`, `elevation_crossed_threshold`, `solar_noon` | `is_up`, `is_night`, `is_ascending`, `elevation` |
-| `timer` | `started`, `finished`, `paused`, `cancelled`, `restarted` | `is_active`, `is_idle`, `is_paused` |
-| `media_player` | `started_playing`, `stopped_playing`, `paused_playing`, `muted`, `volume_crossed_threshold` | `is_playing`, `is_paused`, `is_muted`, `is_volume` |
-| `button` | `pressed` | — |
-
-**Note there is no `person.*` block** — presence is handled via `zone.entered`/`zone.left` and `zone.in_zone` / `zone.not_in_zone` conditions (target the person entity + a zone), or keep the generic `zone` trigger. The **complete documented set** of every trigger/condition key is bundled in [`reference/purpose-specific-keys.md`](reference/purpose-specific-keys.md) — treat it as the allowlist. The live source is [rc.home-assistant.io/triggers](https://rc.home-assistant.io/triggers/) and [/conditions](https://rc.home-assistant.io/conditions/) (each key links to its own page with exact YAML).
-
-### Converting generic → purpose-specific (review/optimize task)
-
-The table above is a snapshot; **the real list grows every release** and integrations add their own keys. So when converting existing automations:
-
-1. **Verify the key exists before proposing it — do NOT invent one.** Check the bundled allowlist [`reference/purpose-specific-keys.md`](reference/purpose-specific-keys.md) first (the complete documented set of trigger/condition keys). If a key is in that file, use it. If it is NOT, do not assume it's invalid (the list grows) but do NOT emit it until you confirm by fetching its own doc page — `https://rc.home-assistant.io/triggers/<key>/` or `.../conditions/<key>/`: **HTTP 200 = real, 404 = does not exist**. A hallucinated key (e.g. `person.arrived_home`, `sensor.co2_high`) produces YAML that silently never fires — worse than leaving the generic form.
-2. **Convert only when it preserves behavior exactly.** Prefer purpose-specific when a matching key exists AND the intent maps cleanly (on/off, open/closed, threshold crossing, presence, device-class sensor reading).
-3. **Keep the generic `state`/`numeric_state`/`template`/`event` form when:**
-   - the entity has **no device class**, so device-class domains (`temperature.*`, `motion.*`, `battery.*`, …) can't match it (check `device_class`/`original_device_class` in `config/.storage/core.entity_registry`, or the entity's attributes via MCP);
-   - the trigger keys on a **specific attribute** or uses complex `from`/`to`/`not_from`/`not_to` transitions with no purpose equivalent;
-   - it's a **template**, `event`, `mqtt`, or `webhook` trigger, or a custom-integration state;
-   - it's a `numeric_state` on a measurement that **has no purpose domain yet**.
-4. **When unsure, leave it generic and say why** — a correct generic automation beats an unverified "optimized" one. Present conversions as suggestions with the before/after, not silent rewrites.
-
-Bonus wins conversion often unlocks: replacing a hard-coded entity list with an `area_id`/`label_id` target, and dropping manual `unavailable`/`unknown` guards the building blocks handle for you.
+Read [purpose-specific syntax and conversion rules](reference/purpose-specific.md) when implementing or converting these triggers/conditions. The [documented key snapshot](reference/purpose-specific-keys.md) is a discovery aid; verify target-version support and exact schema. Keep generic syntax when conversion would change attribute or transition behavior.
 
 ## 4. Numeric State Trigger — Crossing Semantics
 
@@ -412,9 +316,17 @@ triggers:
 
 **Disabling individual triggers:** `enabled: false` or `enabled: !input toggle_input`. Evaluated ONCE at load time, not dynamically.
 
-## 12. Timer-Based Automation Pattern (Restart-Safe)
+## 12. Timer-based countdown with explicit restoration limits
 
-Use timer entities + state triggers instead of `delay:` or `wait_template:` in action sequences. This pattern survives HA restarts because the timer state persists.
+Use a timer configured with `restore: true` to restore an active countdown after restart. Use `timer.finished` to distinguish completion from cancellation. HA does not replay a timer completion missed while it was stopped. For a guaranteed deadline, persist an absolute deadline and reconcile it at HA startup; the example below alone does not guarantee shutdown after downtime. Confirm the required downtime safety behavior before extending this blueprint. See the [official timer limits](https://www.home-assistant.io/integrations/timer/).
+
+Separate helper configuration:
+```yaml
+# configuration.yaml; replace fan_auto_off with the target helper name.
+timer:
+  fan_auto_off:
+    restore: true
+```
 
 ```yaml
 triggers:
@@ -422,9 +334,10 @@ triggers:
     entity_id: !input controlled_entity
     to: "on"
     id: device_on
-  - trigger: state
-    entity_id: !input timer_entity
-    to: idle
+  - trigger: event
+    event_type: timer.finished
+    event_data:
+      entity_id: !input timer_entity
     id: timer_finished
   - trigger: state
     entity_id: !input controlled_entity
@@ -461,8 +374,8 @@ actions:
 ```
 
 **When to use this pattern:**
-- Any automation that needs a timeout/delay and must survive restarts
-- Device auto-shutoff (fans, heaters, coffee machines)
+- A countdown restored while HA is running again; critical auto-shutoff additionally needs persisted-deadline/startup reconciliation
+- Device auto-shutoff when the required downtime behavior has been addressed
 - Debouncing state changes
 - Cooldown periods between automation runs
 
@@ -529,5 +442,5 @@ The condition ensures the periodic trigger only acts when needed, while the even
 ## 14. Webhook Trigger Notes
 
 - A webhook ID can only be used in ONE automation at a time
-- `local_only: true` by default — must set `false` for internet access
+- `local_only: true` by default. Public access (`false`) requires explicit authorization for the exposure/target, an unguessable webhook ID kept private, and appropriate network/access controls; do not change it merely to make a test pass.
 - `trigger.json` (JSON payloads) vs `trigger.data` (form data) vs `trigger.query` (URL params)

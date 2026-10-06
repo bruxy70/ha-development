@@ -7,7 +7,31 @@ description: Home Assistant Jinja2 templating reference. Use when writing or mod
 
 This skill contains ONLY HA-specific Jinja2 differences, sandbox restrictions, and pitfalls. Standard Jinja2 knowledge applies for everything else.
 
-**Function/filter/test names:** the complete documented set is bundled in [`reference/template-functions.md`](reference/template-functions.md) (200 entries) — treat it as the allowlist. Before using a function/filter/test that isn't standard Jinja2, confirm it's in that file, or that its page `https://rc.home-assistant.io/template-functions/<name>/` returns 200. Do not invent names. The docs were restructured in 2026.4: the reference now lives at [/template-functions/](https://rc.home-assistant.io/template-functions/) and the guides at [/docs/templating/](https://rc.home-assistant.io/docs/templating/).
+**Function/filter/test names:** the complete documented set is bundled in [`reference/template-functions.md`](reference/template-functions.md) (200 entries) — use it to discover documented names, then verify target-version support and exact signatures. Before using a function/filter/test that isn't standard Jinja2, confirm it's in that file, or read its official page and confirm the target-version signature. HTTP 200 verifies that a documentation page exists, not that its feature is supported by the target installed version or that a guessed signature is valid. Read the page and match its feature/version/schema before emission. A snapshot's absence alone does not prove invalidity. Do not invent names. The docs were restructured in 2026.4: the reference now lives at [/template-functions/](https://rc.home-assistant.io/template-functions/) and the guides at [/docs/templating/](https://rc.home-assistant.io/docs/templating/).
+
+## Workflow and checklist
+
+Check sandbox restrictions, missing-state handling, return type and execution context before writing a template.
+
+1. Identify the template's consumer, target HA version, intended type and available inputs.
+2. Choose state-based sensors for automatic dependency tracking or trigger-based sensors for explicitly triggered updates. Check limited-template context and documented function signatures; on uncertainty, return to step 1.
+3. Draft with safe state access, conversion defaults and namespace/concatenation where needed.
+4. Render normal, missing, unknown/unavailable and boundary inputs in the target HA template context, then run [ha-validate](../ha-validate/SKILL.md). Offline Jinja can check supported syntax but cannot prove HA helpers, native return types or update behavior. On failure return to step 3, fix and re-render; stop repeated unchanged failure with a blocker.
+5. Report observed values/types and checks separately from unavailable live verification.
+
+- [ ] Confirm consumer, version, inputs and output type.
+- [ ] Check context and helper signatures; return to scope if unknown.
+- [ ] Render edge cases and validate; return to draft on failure.
+- [ ] Record type/update evidence and verification limits.
+
+## Requirements and execution boundary
+
+Uses host filesystem text tools and browser/web-fetch access to current HA docs; no package install is needed for lookup. Rendering/semantic checks require configured supported HA access using [connection setup](../ha-mcp-setup/SKILL.md); check tools use [validation](../ha-validate/SKILL.md). These references support both Claude Code and Codex marketplace consumers; resolve links relative to the loaded skill, independently of the working directory.
+
+Examples are adaptable fragments, not complete configurations. Preserve required schema/API, nesting and semantic guards; replace entities, inputs, timing and targets with project values. Loading this skill does not authorize live actions, reloads, restarts or deployment. Use only the live target/actions already authorized by the user; otherwise report offline results and obtain explicit scope before live changes.
+
+[Cross-client enforcement proposals](../ha-validate/reference/enforcement.md) describe candidate hook events and their limits; no hook is activated by reading this skill. [Three evaluation prompts and results](reference/evaluations.md) track model/client evidence.
+
 
 ## 1. Sandbox Security Restrictions
 
@@ -25,8 +49,8 @@ This skill contains ONLY HA-specific Jinja2 differences, sandbox restrictions, a
 {{ dict1 | combine(dict2) }}
 {{ dict1 | combine(dict2, recursive=True) }}
 
-{# Filtering — use comprehension or selectattr: #}
-{{ [x for x in list if x > 5] }}
+{# Filtering — Jinja select; Python comprehensions are unsupported: #}
+{{ [1, 6, 9] | select('gt', 5) | list }}  {# [6, 9] #}
 {{ items | selectattr('active', 'eq', true) | list }}
 ```
 
